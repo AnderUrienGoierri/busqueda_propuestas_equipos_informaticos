@@ -1,0 +1,17 @@
+He dejado el archivo workflow_ofertas.json 100% preparado con las URLs y la lógica necesaria para leer de SerpApi (PcComponentes y Coolmod) y de Rainforest API (Amazon).
+
+Para que empiece a buscar datos reales, solo tienes que seguir estos pasos:
+
+1. Conseguir las API Keys (Es gratis)
+https://serpapi.com/dashboard
+SerpApi (Para PcComponentes y Coolmod): Entra en serpapi.com y regístrate para obtener una cuenta gratuita (te da 100 búsquedas al mes). En tu panel de control o "Dashboard" verás tu API Key privada.
+Rainforest API (Para Amazon): Entra en rainforestapi.com y haz lo mismo, crea una cuenta gratuita (también da unas 100 peticiones gratis). Verás tu API Key en el Dashboard.
+2. Poner las claves en tu n8n
+Una vez importes de nuevo este workflow_ofertas.json actualizado a tu n8n, verás los tres nodos HTTP:
+
+En el nodo SerpApi (PcComponentes): Haz doble clic, ve al parámetro URL y sustituye la palabra TU_API_KEY_SERPAPI (al final de la URL) por tu clave real de SerpApi.
+En el nodo SerpApi (Coolmod): Haz doble clic y sustituye igualmente la palabra TU_API_KEY_SERPAPI por la misma clave de SerpApi.
+En el nodo Rainforest API (Amazon): Haz doble clic, ve a la URL y sustituye la palabra TU_API_KEY_RAINFOREST por la clave que obtuviste en Rainforest API.
+¿Qué he cambiado en el código interno? He adaptado el nodo "Unificar y Filtrar Top 5". La estructura de datos que devuelve Rainforest (Amazon) es diferente a la de SerpApi. Ahora el código en JavaScript detecta automáticamente si la respuesta viene en el formato search_results (Amazon) o en el formato shopping_results (SerpApi), limpia símbolos de moneda y decimales rebeldes, y unifica todas las ofertas en la misma tabla sin que dé errores.
+
+¡Con esto tu flujo estará completamente funcional y haciendo scraping en tiempo real cuando dejes el .txt en la carpeta! Pruébalo y coméntame si Ollama o las APIs sacan algún error.

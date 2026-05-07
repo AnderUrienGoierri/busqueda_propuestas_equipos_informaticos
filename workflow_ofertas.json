@@ -1,0 +1,229 @@
+{
+  "name": "Buscador de Ofertas Pro - PDF Corporativo",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerOn": "folder",
+        "path": "/n8n-watch/busqueda_ofertas_equipos/peticiones_oferta",
+        "events": ["add"],
+        "options": { "awaitWriteFinish": true, "usePolling": true }
+      },
+      "name": "Local File Trigger",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [-420, 400]
+    },
+    {
+      "parameters": { "command": "=cat \"{{$json.path}}\"" },
+      "name": "Read Text File",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [-220, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "llama3.2" },
+            { "name": "prompt", "value": "=Eres un parser. Analiza esta peticion de compra de hardware en espanol: '{{$json.stdout}}'.\nDevuelve EXCLUSIVAMENTE un JSON valido (sin texto adicional, sin markdown) con estas tres claves:\n1. \"keywords\": cadena de 3 a 5 palabras clave del producto en espanol o ingles, sin acentos, optimizadas para Google (ej: \"portatil 16GB SSD i7\").\n2. \"presupuesto\": numero entero en euros (sin simbolo).\n3. \"tipo\": una sola palabra que clasifique el producto (Portatil, Sobremesa, Monitor, Impresora, Tablet, Componente).\nResponde SOLO el JSON, nada mas." },
+            { "name": "stream", "value": false },
+            { "name": "format", "value": "json" }
+          ]
+        },
+        "options": { "timeout": 300000 }
+      },
+      "name": "Ollama Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [-20, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza la respuesta de Ollama y prepara los parametros de busqueda\nlet res = {};\ntry {\n  const raw = $input.item.json.response;\n  res = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});\n} catch (e) {\n  res = {};\n}\nconst keywords = String(res.keywords || res.tipo || 'PC').trim();\nconst presupuesto = Number(res.presupuesto) || 1000;\nconst tipo = String(res.tipo || 'Equipo').trim();\nreturn { json: { q: keywords, pMax: presupuesto, tipo: tipo } };"
+      },
+      "name": "Preparar Busqueda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 400]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.rainforestapi.com/request?api_key=8531EA9640A248D0B0C517E23131F9A5&type=search&amazon_domain=amazon.es&search_term={{encodeURIComponent($json.q)}}",
+        "options": { "timeout": 30000 }
+      },
+      "continueOnFail": true,
+      "name": "Amazon",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [440, 100]
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?engine=google&q={{encodeURIComponent($json.q + ' site:pccomponentes.com')}}&hl=es&gl=es&google_domain=google.es&num=20&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": { "timeout": 30000 }
+      },
+      "continueOnFail": true,
+      "name": "PcComponentes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [440, 280]
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?engine=google&q={{encodeURIComponent($json.q + ' site:coolmod.com')}}&hl=es&gl=es&google_domain=google.es&num=20&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": { "timeout": 30000 }
+      },
+      "continueOnFail": true,
+      "name": "Coolmod",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [440, 460]
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?engine=google&q={{encodeURIComponent($json.q + ' site:mediamarkt.es')}}&hl=es&gl=es&google_domain=google.es&num=20&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": { "timeout": 30000 }
+      },
+      "continueOnFail": true,
+      "name": "MediaMarkt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [440, 640]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza respuesta de Rainforest API (Amazon)\nconst data = $input.item.json || {};\nconst products = [];\nconst parseAmazonPrice = (p) => {\n  if (!p) return 0;\n  if (typeof p.value === 'number') return p.value;\n  if (p.raw) {\n    const txt = String(p.raw).replace(/\\u00a0/g,' ').trim();\n    let n = txt.replace(/[^0-9.,]/g,'');\n    if (n.includes('.') && n.includes(',')) n = n.replace(/\\./g,'').replace(',', '.');\n    else if (n.includes(',')) n = n.replace(',', '.');\n    const v = parseFloat(n);\n    return isFinite(v) ? v : 0;\n  }\n  return 0;\n};\nif (Array.isArray(data.search_results)) {\n  data.search_results.forEach(r => {\n    if (!r || !r.title || !r.link) return;\n    const price = parseAmazonPrice(r.price) || parseAmazonPrice(r.price_upper);\n    products.push({ source: 'Amazon', title: r.title, price: price || 0, link: r.link, image: r.image || '' });\n  });\n}\nreturn [{ json: { source: 'Amazon', products } }];"
+      },
+      "name": "Norm Amazon",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza respuesta de SerpApi (engine=google) para PcComponentes\nconst STORE = 'PcComponentes';\nconst DOMAIN = 'pccomponentes.com';\nconst data = $input.item.json || {};\nconst products = [];\nconst extractPrice = (text) => {\n  if (!text) return 0;\n  const m = String(text).match(/(\\d{1,3}(?:[.,]\\d{3})*(?:[.,]\\d{1,2})?)\\s*(?:\\u20ac|EUR|euros?)/i);\n  if (!m) return 0;\n  let n = m[1];\n  if (n.includes('.') && n.includes(',')) n = n.replace(/\\./g,'').replace(',', '.');\n  else if (n.includes(',') && !n.includes('.')) n = n.replace(',', '.');\n  else if (n.includes('.')) {\n    const parts = n.split('.');\n    if (parts.length === 2 && parts[1].length === 3) n = parts.join('');\n  }\n  const v = parseFloat(n);\n  return isFinite(v) ? v : 0;\n};\nconst pushItem = (title, link, price) => {\n  if (!title || !link) return;\n  if (!String(link).toLowerCase().includes(DOMAIN)) return;\n  products.push({ source: STORE, title: String(title).trim(), price: price || 0, link });\n};\nif (Array.isArray(data.organic_results)) {\n  data.organic_results.forEach(r => {\n    let price = 0;\n    if (r.rich_snippet && r.rich_snippet.top && r.rich_snippet.top.detected_extensions) {\n      price = Number(r.rich_snippet.top.detected_extensions.price) || 0;\n    }\n    if (!price && r.rich_snippet && r.rich_snippet.bottom && r.rich_snippet.bottom.detected_extensions) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price) || 0;\n    }\n    if (!price) price = extractPrice(r.snippet);\n    if (!price) price = extractPrice(r.title);\n    pushItem(r.title, r.link, price);\n  });\n}\nif (Array.isArray(data.shopping_results)) {\n  data.shopping_results.forEach(r => {\n    const price = Number(r.extracted_price) || extractPrice(r.price);\n    pushItem(r.title, r.link, price);\n  });\n}\nreturn [{ json: { source: STORE, products } }];"
+      },
+      "name": "Norm PcComponentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza respuesta de SerpApi (engine=google) para Coolmod\nconst STORE = 'Coolmod';\nconst DOMAIN = 'coolmod.com';\nconst data = $input.item.json || {};\nconst products = [];\nconst extractPrice = (text) => {\n  if (!text) return 0;\n  const m = String(text).match(/(\\d{1,3}(?:[.,]\\d{3})*(?:[.,]\\d{1,2})?)\\s*(?:\\u20ac|EUR|euros?)/i);\n  if (!m) return 0;\n  let n = m[1];\n  if (n.includes('.') && n.includes(',')) n = n.replace(/\\./g,'').replace(',', '.');\n  else if (n.includes(',') && !n.includes('.')) n = n.replace(',', '.');\n  else if (n.includes('.')) {\n    const parts = n.split('.');\n    if (parts.length === 2 && parts[1].length === 3) n = parts.join('');\n  }\n  const v = parseFloat(n);\n  return isFinite(v) ? v : 0;\n};\nconst pushItem = (title, link, price) => {\n  if (!title || !link) return;\n  if (!String(link).toLowerCase().includes(DOMAIN)) return;\n  products.push({ source: STORE, title: String(title).trim(), price: price || 0, link });\n};\nif (Array.isArray(data.organic_results)) {\n  data.organic_results.forEach(r => {\n    let price = 0;\n    if (r.rich_snippet && r.rich_snippet.top && r.rich_snippet.top.detected_extensions) {\n      price = Number(r.rich_snippet.top.detected_extensions.price) || 0;\n    }\n    if (!price && r.rich_snippet && r.rich_snippet.bottom && r.rich_snippet.bottom.detected_extensions) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price) || 0;\n    }\n    if (!price) price = extractPrice(r.snippet);\n    if (!price) price = extractPrice(r.title);\n    pushItem(r.title, r.link, price);\n  });\n}\nif (Array.isArray(data.shopping_results)) {\n  data.shopping_results.forEach(r => {\n    const price = Number(r.extracted_price) || extractPrice(r.price);\n    pushItem(r.title, r.link, price);\n  });\n}\nreturn [{ json: { source: STORE, products } }];"
+      },
+      "name": "Norm Coolmod",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza respuesta de SerpApi (engine=google) para MediaMarkt\nconst STORE = 'MediaMarkt';\nconst DOMAIN = 'mediamarkt.es';\nconst data = $input.item.json || {};\nconst products = [];\nconst extractPrice = (text) => {\n  if (!text) return 0;\n  const m = String(text).match(/(\\d{1,3}(?:[.,]\\d{3})*(?:[.,]\\d{1,2})?)\\s*(?:\\u20ac|EUR|euros?)/i);\n  if (!m) return 0;\n  let n = m[1];\n  if (n.includes('.') && n.includes(',')) n = n.replace(/\\./g,'').replace(',', '.');\n  else if (n.includes(',') && !n.includes('.')) n = n.replace(',', '.');\n  else if (n.includes('.')) {\n    const parts = n.split('.');\n    if (parts.length === 2 && parts[1].length === 3) n = parts.join('');\n  }\n  const v = parseFloat(n);\n  return isFinite(v) ? v : 0;\n};\nconst pushItem = (title, link, price) => {\n  if (!title || !link) return;\n  if (!String(link).toLowerCase().includes(DOMAIN)) return;\n  products.push({ source: STORE, title: String(title).trim(), price: price || 0, link });\n};\nif (Array.isArray(data.organic_results)) {\n  data.organic_results.forEach(r => {\n    let price = 0;\n    if (r.rich_snippet && r.rich_snippet.top && r.rich_snippet.top.detected_extensions) {\n      price = Number(r.rich_snippet.top.detected_extensions.price) || 0;\n    }\n    if (!price && r.rich_snippet && r.rich_snippet.bottom && r.rich_snippet.bottom.detected_extensions) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price) || 0;\n    }\n    if (!price) price = extractPrice(r.snippet);\n    if (!price) price = extractPrice(r.title);\n    pushItem(r.title, r.link, price);\n  });\n}\nif (Array.isArray(data.shopping_results)) {\n  data.shopping_results.forEach(r => {\n    const price = Number(r.extracted_price) || extractPrice(r.price);\n    pushItem(r.title, r.link, price);\n  });\n}\nreturn [{ json: { source: STORE, products } }];"
+      },
+      "name": "Norm MediaMarkt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 640]
+    },
+    {
+      "parameters": { "mode": "append" },
+      "name": "Merge AM-PC",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [880, 190]
+    },
+    {
+      "parameters": { "mode": "append" },
+      "name": "Merge CM-MM",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [880, 550]
+    },
+    {
+      "parameters": { "mode": "append" },
+      "name": "Unificar Resultados",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [1080, 370]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================\n// PROCESAMIENTO Y GENERACION DE HTML CORPORATIVO\n// =====================================================\nconst STORES = ['Amazon', 'PcComponentes', 'Coolmod', 'MediaMarkt'];\n\n// 1) Recoger todos los productos normalizados de las 4 fuentes\nconst allProducts = [];\n$input.all().forEach(item => {\n  if (item && item.json && Array.isArray(item.json.products)) {\n    allProducts.push(...item.json.products);\n  }\n});\n\n// 2) Recuperar parametros de la peticion\nconst params = $('Preparar Busqueda').first().json || {};\nconst pMax = Number(params.pMax) || 9999;\nconst tipo = params.tipo || 'Equipo';\nconst query = params.q || '';\n\n// 3) Filtrar (precio valido y dentro de presupuesto), deduplicar por link, ordenar por precio\nconst seen = new Set();\nconst valid = allProducts\n  .filter(p => p && p.price > 0 && p.price <= pMax && p.title && p.link)\n  .filter(p => { const k = String(p.link).split('?')[0]; if (seen.has(k)) return false; seen.add(k); return true; })\n  .sort((a, b) => a.price - b.price);\n\n// 4) Top 3 global y Top 5 por tienda\nconst top3 = valid.slice(0, 3);\nconst byStore = {};\nSTORES.forEach(s => byStore[s] = []);\nvalid.forEach(p => { if (byStore[p.source]) byStore[p.source].push(p); });\nObject.keys(byStore).forEach(s => { byStore[s] = byStore[s].slice(0, 5); });\n\n// 5) Helpers\nconst fmt = n => Number(n).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' \\u20ac';\nconst esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');\nconst trunc = (s, n) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1).trim() + '\\u2026' : s; };\nconst today = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });\nconst activeStores = STORES.filter(s => byStore[s].length > 0).length;\nconst bestPrice = valid.length ? valid[0].price : 0;\nconst saving = valid.length ? (pMax - valid[0].price) : 0;\n\n// 6) Iconos SVG inline\nconst ico = {\n  globe:  '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M2 12h20\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/></svg>',\n  store:  '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 9l1-5h16l1 5\"/><path d=\"M5 9v11h14V9\"/><path d=\"M9 22V13h6v9\"/></svg>',\n  link:   '<svg viewBox=\"0 0 24 24\" width=\"12\" height=\"12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M7 17L17 7\"/><path d=\"M8 7h9v9\"/></svg>',\n  rank:   '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"3 17 9 11 13 15 21 7\"/><polyline points=\"14 7 21 7 21 14\"/></svg>',\n  cube:   '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"/><polyline points=\"3.27 6.96 12 12.01 20.73 6.96\"/><line x1=\"12\" y1=\"22.08\" x2=\"12\" y2=\"12\"/></svg>',\n  tag:    '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z\"/><line x1=\"7\" y1=\"7\" x2=\"7.01\" y2=\"7\"/></svg>',\n  trend:  '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"23 6 13.5 15.5 8.5 10.5 1 18\"/><polyline points=\"17 6 23 6 23 12\"/></svg>',\n  spark:  '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"12 2 15 9 22 10 17 15 18 22 12 19 6 22 7 15 2 10 9 9 12 2\"/></svg>'\n};\n\n// 7) HTML\nconst headerHtml = '<header class=\"hdr\">' +\n  '<div class=\"hdr-row\">' +\n    '<div class=\"brand\">' +\n      '<div class=\"brand-mark\">' + ico.cube + '</div>' +\n      '<div class=\"brand-text\">' +\n        '<div class=\"eyebrow\">INFORME COMPARATIVO DE OFERTAS</div>' +\n        '<h1>Propuesta de Hardware</h1>' +\n      '</div>' +\n    '</div>' +\n    '<div class=\"hdr-meta\">' +\n      '<div class=\"meta-row\"><span class=\"k\">Fecha</span><span class=\"v\">' + esc(today) + '</span></div>' +\n      '<div class=\"meta-row\"><span class=\"k\">Categoria</span><span class=\"v\">' + esc(tipo) + '</span></div>' +\n      '<div class=\"meta-row\"><span class=\"k\">Presupuesto</span><span class=\"v\">' + fmt(pMax) + '</span></div>' +\n      '<div class=\"meta-row\"><span class=\"k\">Terminos</span><span class=\"v\">' + esc(trunc(query, 36)) + '</span></div>' +\n    '</div>' +\n  '</div>' +\n'</header>';\n\nconst summaryHtml = '<section class=\"summary\">' +\n  '<div class=\"card stat\"><div class=\"stat-icon\">' + ico.globe  + '</div><div class=\"stat-body\"><span class=\"stat-label\">Ofertas analizadas</span><span class=\"stat-value\">' + valid.length + '</span></div></div>' +\n  '<div class=\"card stat\"><div class=\"stat-icon\">' + ico.store  + '</div><div class=\"stat-body\"><span class=\"stat-label\">Tiendas con resultados</span><span class=\"stat-value\">' + activeStores + ' / ' + STORES.length + '</span></div></div>' +\n  '<div class=\"card stat\"><div class=\"stat-icon\">' + ico.tag    + '</div><div class=\"stat-body\"><span class=\"stat-label\">Mejor precio</span><span class=\"stat-value\">' + (valid.length ? fmt(bestPrice) : '\\u2014') + '</span></div></div>' +\n  '<div class=\"card stat\"><div class=\"stat-icon\">' + ico.trend  + '</div><div class=\"stat-body\"><span class=\"stat-label\">Ahorro vs presupuesto</span><span class=\"stat-value\">' + (valid.length ? fmt(saving) : '\\u2014') + '</span></div></div>' +\n'</section>';\n\nconst top3Rows = top3.length\n  ? top3.map((p, i) => '<tr>' +\n      '<td class=\"rank-cell\"><span class=\"rank rank-' + (i + 1) + '\">' + (i + 1) + '</span></td>' +\n      '<td class=\"title-cell\">' + esc(trunc(p.title, 90)) + '</td>' +\n      '<td class=\"store-cell\"><span class=\"chip\">' + esc(p.source) + '</span></td>' +\n      '<td class=\"price-cell\">' + fmt(p.price) + '</td>' +\n      '<td class=\"action-cell\"><a class=\"btn-primary\" href=\"' + esc(p.link) + '\">' + ico.link + '<span>Ver oferta</span></a></td>' +\n    '</tr>').join('')\n  : '<tr><td colspan=\"5\" class=\"empty\">Sin resultados dentro del presupuesto.</td></tr>';\n\nconst top3Html = '<section class=\"block hero\">' +\n  '<div class=\"block-hd\">' +\n    '<div class=\"block-icon block-icon-primary\">' + ico.spark + '</div>' +\n    '<div><h2>Top 3 - Recomendacion global</h2><p class=\"sub\">Las tres mejores ofertas por precio entre todas las tiendas analizadas.</p></div>' +\n  '</div>' +\n  '<table class=\"table table-top3\">' +\n    '<thead><tr><th class=\"th-rank\">#</th><th>Producto</th><th>Tienda</th><th class=\"th-price\">Precio</th><th class=\"th-act\">Enlace</th></tr></thead>' +\n    '<tbody>' + top3Rows + '</tbody>' +\n  '</table>' +\n'</section>';\n\nconst storeBlocks = STORES.map(store => {\n  const items = byStore[store];\n  const rows = items.length\n    ? items.map((p, i) => '<tr>' +\n        '<td class=\"rank-cell\"><span class=\"rank rank-store\">' + (i + 1) + '</span></td>' +\n        '<td class=\"title-cell\">' + esc(trunc(p.title, 95)) + '</td>' +\n        '<td class=\"price-cell\">' + fmt(p.price) + '</td>' +\n        '<td class=\"action-cell\"><a class=\"btn-secondary\" href=\"' + esc(p.link) + '\">' + ico.link + '<span>Abrir</span></a></td>' +\n      '</tr>').join('')\n    : '<tr><td colspan=\"4\" class=\"empty\">Sin resultados dentro del presupuesto en esta tienda.</td></tr>';\n  return '<section class=\"block store-block\">' +\n    '<div class=\"block-hd\">' +\n      '<div class=\"block-icon\">' + ico.store + '</div>' +\n      '<div><h3>' + esc(store) + ' <span class=\"muted\">- Top 5</span></h3><p class=\"sub\">' + items.length + ' oferta(s) validas dentro del presupuesto.</p></div>' +\n    '</div>' +\n    '<table class=\"table table-store\">' +\n      '<thead><tr><th class=\"th-rank\">#</th><th>Producto</th><th class=\"th-price\">Precio</th><th class=\"th-act\">Enlace</th></tr></thead>' +\n      '<tbody>' + rows + '</tbody>' +\n    '</table>' +\n  '</section>';\n}).join('');\n\nconst footerHtml = '<footer class=\"ftr\">' +\n  '<div class=\"ftr-l\">Generado automaticamente con n8n + Ollama (Llama 3.1) - Datos en tiempo real via Rainforest API y SerpApi.</div>' +\n  '<div class=\"ftr-r\">' + esc(today) + '</div>' +\n'</footer>';\n\nconst css = ':root{--bg:#f5f7fa;--surface:#ffffff;--surface-2:#f1f5f9;--ink:#0f172a;--ink-soft:#334155;--muted:#64748b;--line:#e2e8f0;--brand:#0f172a;--brand-2:#1e3a8a;--accent:#2563eb;--accent-soft:#dbeafe;--price:#047857;--price-bg:#ecfdf5;--r:10px;--r-sm:6px}'\n+ '*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;font-size:11px;line-height:1.45;-webkit-font-smoothing:antialiased}'\n+ '.page{max-width:1000px;margin:0 auto;padding:30px 34px 26px}'\n+ '.hdr{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 100%);color:#fff;border-radius:var(--r);padding:24px 28px;margin-bottom:20px;box-shadow:0 8px 24px -12px rgba(15,23,42,.35)}'\n+ '.hdr-row{display:flex;justify-content:space-between;align-items:flex-start;gap:24px}'\n+ '.brand{display:flex;gap:14px;align-items:center}'\n+ '.brand-mark{width:46px;height:46px;border-radius:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;color:#fff}'\n+ '.eyebrow{font-size:9.5px;letter-spacing:2px;color:#cbd5e1;font-weight:600;text-transform:uppercase}'\n+ '.brand-text h1{margin:3px 0 0;font-size:22px;font-weight:700;letter-spacing:-.3px;color:#fff}'\n+ '.hdr-meta{min-width:280px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:var(--r-sm);padding:11px 14px}'\n+ '.meta-row{display:flex;justify-content:space-between;gap:20px;padding:3px 0;font-size:11px}'\n+ '.meta-row + .meta-row{border-top:1px solid rgba(255,255,255,.08)}'\n+ '.meta-row .k{color:#94a3b8;font-weight:500}'\n+ '.meta-row .v{color:#fff;font-weight:600}'\n+ '.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}'\n+ '.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;box-shadow:0 1px 2px rgba(15,23,42,.04)}'\n+ '.stat{display:flex;gap:12px;align-items:center}'\n+ '.stat-icon{width:36px;height:36px;flex-shrink:0;border-radius:8px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center}'\n+ '.stat-body{display:flex;flex-direction:column;gap:2px}'\n+ '.stat-label{font-size:9.5px;color:var(--muted);font-weight:600;letter-spacing:.4px;text-transform:uppercase}'\n+ '.stat-value{font-size:18px;color:var(--ink);font-weight:700;letter-spacing:-.3px;font-variant-numeric:tabular-nums}'\n+ '.block{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px 14px;margin-bottom:14px;box-shadow:0 1px 2px rgba(15,23,42,.04);page-break-inside:avoid}'\n+ '.block.hero{border-color:var(--accent-soft);box-shadow:0 4px 14px -8px rgba(37,99,235,.25)}'\n+ '.block-hd{display:flex;align-items:center;gap:12px;margin-bottom:12px}'\n+ '.block-icon{width:36px;height:36px;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);display:flex;align-items:center;justify-content:center;border:1px solid var(--line);flex-shrink:0}'\n+ '.block-icon-primary{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-soft)}'\n+ '.block-hd h2{margin:0;font-size:15px;font-weight:700;color:var(--ink);letter-spacing:-.2px}'\n+ '.block-hd h3{margin:0;font-size:13.5px;font-weight:700;color:var(--ink);letter-spacing:-.1px}'\n+ '.block-hd .muted{color:var(--muted);font-weight:500}'\n+ '.sub{margin:1px 0 0;font-size:10.5px;color:var(--muted)}'\n+ '.section-title{display:flex;align-items:center;gap:10px;margin:22px 0 10px;padding:0 4px;color:var(--ink);font-size:12.5px;font-weight:700;letter-spacing:.2px;text-transform:uppercase}'\n+ '.section-title .bar{flex:1;height:1px;background:var(--line)}'\n+ '.table{width:100%;border-collapse:separate;border-spacing:0;font-size:10.5px}'\n+ '.table th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-size:9.5px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--surface-2)}'\n+ '.table th:first-child{border-top-left-radius:var(--r-sm)}'\n+ '.table th:last-child{border-top-right-radius:var(--r-sm)}'\n+ '.table td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle;color:var(--ink-soft)}'\n+ '.table tbody tr:last-child td{border-bottom:none}'\n+ '.th-rank{width:36px;text-align:center}'\n+ '.th-price{width:96px;text-align:right}'\n+ '.th-act{width:108px;text-align:right}'\n+ '.rank-cell{text-align:center}'\n+ '.rank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-weight:700;font-size:10px;color:#fff;background:var(--ink-soft)}'\n+ '.rank-1{background:#0f172a}.rank-2{background:#334155}.rank-3{background:#64748b}'\n+ '.rank-store{background:var(--accent);color:#fff}'\n+ '.title-cell{color:var(--ink);font-weight:500;line-height:1.4}'\n+ '.price-cell{text-align:right;font-weight:700;color:var(--price);background:var(--price-bg);font-variant-numeric:tabular-nums}'\n+ '.action-cell{text-align:right}'\n+ '.chip{display:inline-block;padding:3px 9px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);font-size:10px;font-weight:600;color:var(--ink-soft)}'\n+ '.btn-primary,.btn-secondary{display:inline-flex;align-items:center;gap:5px;text-decoration:none;font-weight:600;font-size:10px;padding:6px 11px;border-radius:var(--r-sm);white-space:nowrap}'\n+ '.btn-primary{background:var(--accent);color:#fff;border:1px solid var(--accent)}'\n+ '.btn-secondary{background:#fff;color:var(--accent);border:1px solid #c7dafd}'\n+ '.empty{text-align:center;color:var(--muted);font-style:italic;padding:18px}'\n+ '.ftr{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);margin-top:18px;padding-top:14px;border-top:1px solid var(--line);gap:24px}'\n+ '@page{size:A4;margin:14mm}'\n+ '@media print{.block,.summary,.hdr{break-inside:avoid}}';\n\nconst sectionTitle = '<div class=\"section-title\">' + ico.store + '<span>Detalle por tienda - Top 5</span><span class=\"bar\"></span></div>';\n\nconst html = '<!DOCTYPE html><html lang=\"es\"><head><meta charset=\"utf-8\">' +\n  '<title>Propuesta de Hardware - ' + esc(tipo) + '</title>' +\n  '<style>' + css + '</style>' +\n'</head><body><div class=\"page\">' +\n  headerHtml +\n  summaryHtml +\n  top3Html +\n  sectionTitle +\n  storeBlocks +\n  footerHtml +\n'</div></body></html>';\n\nreturn [{\n  json: {\n    total: valid.length,\n    top3: top3.length,\n    stores: STORES.map(s => ({ name: s, count: byStore[s].length })),\n    presupuesto: pMax,\n    tipo: tipo,\n    query: query\n  },\n  binary: {\n    index: {\n      data: Buffer.from(html, 'utf-8').toString('base64'),\n      mimeType: 'text/html',\n      fileName: 'index.html'\n    }\n  }\n}];"
+      },
+      "name": "Procesar y Generar HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 370]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gotenberg:3000/forms/chromium/convert/html",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "files", "parameterType": "formBinaryData", "inputDataFieldName": "index" }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "name": "Convertir a PDF (Gotenberg)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1520, 370]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/n8n-watch/busqueda_ofertas_equipos/propuestas_generadas/ofertas_{{ $('Preparar Busqueda').first().json.tipo.toLowerCase().replace(/[^a-z0-9]/g,'_') }}_{{$now.toFormat('yyyyMMdd_HHmmss')}}.pdf",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "name": "Guardar PDF",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1720, 370]
+    }
+  ],
+  "connections": {
+    "Local File Trigger": { "main": [[{ "node": "Read Text File", "type": "main", "index": 0 }]] },
+    "Read Text File":     { "main": [[{ "node": "Ollama Extract", "type": "main", "index": 0 }]] },
+    "Ollama Extract":     { "main": [[{ "node": "Preparar Busqueda", "type": "main", "index": 0 }]] },
+    "Preparar Busqueda":  { "main": [[
+      { "node": "Amazon",        "type": "main", "index": 0 },
+      { "node": "PcComponentes", "type": "main", "index": 0 },
+      { "node": "Coolmod",       "type": "main", "index": 0 },
+      { "node": "MediaMarkt",    "type": "main", "index": 0 }
+    ]] },
+    "Amazon":         { "main": [[{ "node": "Norm Amazon",        "type": "main", "index": 0 }]] },
+    "PcComponentes":  { "main": [[{ "node": "Norm PcComponentes", "type": "main", "index": 0 }]] },
+    "Coolmod":        { "main": [[{ "node": "Norm Coolmod",       "type": "main", "index": 0 }]] },
+    "MediaMarkt":     { "main": [[{ "node": "Norm MediaMarkt",    "type": "main", "index": 0 }]] },
+    "Norm Amazon":         { "main": [[{ "node": "Merge AM-PC", "type": "main", "index": 0 }]] },
+    "Norm PcComponentes":  { "main": [[{ "node": "Merge AM-PC", "type": "main", "index": 1 }]] },
+    "Norm Coolmod":        { "main": [[{ "node": "Merge CM-MM", "type": "main", "index": 0 }]] },
+    "Norm MediaMarkt":     { "main": [[{ "node": "Merge CM-MM", "type": "main", "index": 1 }]] },
+    "Merge AM-PC":  { "main": [[{ "node": "Unificar Resultados", "type": "main", "index": 0 }]] },
+    "Merge CM-MM":  { "main": [[{ "node": "Unificar Resultados", "type": "main", "index": 1 }]] },
+    "Unificar Resultados":     { "main": [[{ "node": "Procesar y Generar HTML", "type": "main", "index": 0 }]] },
+    "Procesar y Generar HTML": { "main": [[{ "node": "Convertir a PDF (Gotenberg)", "type": "main", "index": 0 }]] },
+    "Convertir a PDF (Gotenberg)": { "main": [[{ "node": "Guardar PDF", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

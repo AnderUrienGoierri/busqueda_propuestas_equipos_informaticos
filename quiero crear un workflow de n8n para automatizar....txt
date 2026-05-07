@@ -1,0 +1,68 @@
+﻿Automatizar la búsqueda de presupuestos de hardware te ahorrará horas de trabajo manual. n8n es la herramienta perfecta para esto porque te permite consultar múltiples fuentes en paralelo, unificar los datos y filtrarlos.
+Aquí tienes un plan de proyecto estructurado paso a paso para implementar este flujo de trabajo, teniendo en cuenta la realidad de las APIs de comercio electrónico.
+________________
+Fase 1: Análisis de Fuentes (El reto de las APIs)
+Antes de tocar n8n, debemos resolver el acceso a los datos. Nos pides usar PcComponentes y dos más.
+* Aviso importante: Tiendas como PcComponentes, Coolmod o MediaMarkt no tienen APIs públicas abiertas para buscar productos (sus APIs son para vendedores del Marketplace).
+* La Solución: Para obtener datos de estas páginas sin ser bloqueados, te recomiendo este stack de 3 "APIs":
+   1. API de Google Shopping (vía SerpApi o ValueSERP): Esta es la mejor opción. Le envías la búsqueda ("portatil i7 16gb ram PcComponentes") y la API te devuelve un JSON limpio con los precios, enlaces y tiendas. Te cubrirá PcComponentes y cualquier otra tienda.
+   2. Amazon Product Advertising API (PA-API): Es la API oficial de Amazon. Requiere una cuenta de afiliados de Amazon, pero es muy robusta para buscar cualquier tipo de hardware.
+   3. Web Scraping nativo en n8n: Para tiendas muy específicas donde la API de Google Shopping no llegue, puedes usar el nodo HTTP Request de n8n para descargar la web y el nodo HTML Extract para sacar el nombre, precio y enlace usando selectores CSS.
+Fase 2: Diseño del Trigger (La Entrada de Datos)
+¿Cómo le vas a decir a n8n qué buscar? Tienes dos opciones principales:
+1. n8n Form Trigger: n8n tiene formularios integrados. Puedes crear un formulario web sencillo que tu equipo rellene con:
+   * Tipo de equipo (Ej: Portátil, Switch, Servidor)
+   * Especificaciones clave (Ej: "Mínimo 16GB RAM, procesador i7 o Ryzen 7")
+   * Presupuesto máximo (Ej: 1000€)
+2. Webhook Trigger: Si ya usas un sistema de tickets (Jira, GLPI, un bot de Slack/Teams), puedes configurarlo para que envíe una petición (POST) con estos datos directamente a n8n.
+Fase 3: Construcción del Workflow en n8n (Paso a Paso)
+Este es el esquema visual de los nodos que debes ir añadiendo a tu lienzo de n8n:
+1. [Trigger] Form o Webhook: Recibe los parámetros del cliente.
+2. [Nodo Code] Preparar las Búsquedas: Un pequeño script en JavaScript que coja el input del formulario y genere las URLs de búsqueda o los queries (Ej: unir "Portátil" + "16GB RAM" en un solo string q=Portatil+16GB+RAM).
+3. [Sub-flujos Paralelos] Peticiones HTTP: Desde el nodo anterior, saca tres ramas (una para cada fuente):
+   * Rama A: HTTP Request apuntando a SerpAPI (Google Shopping filtrado por PcComponentes).
+   * Rama B: HTTP Request apuntando a la API de Amazon.
+   * Rama C: HTTP Request apuntando a la tercera fuente elegida (o scraping de otra web).
+4. [Nodo Item Lists - Merge]: Une los resultados de las 3 ramas en una sola lista gigante de productos. Todos deben tener una estructura común (Ej: Nombre, Precio, Enlace, Tienda).
+5. [Nodo Code] Filtrado y Ordenación:
+   * Elimina resultados que superen el "Presupuesto máximo".
+   * Ordena la lista de menor a mayor precio (o mediante un algoritmo de relevancia que cruce las palabras clave).
+   * Recorta el array (Array.slice) para quedarte solo con el Top 5.
+6. [Nodo de Salida] Notificación:
+   * Usa el nodo Send Email para enviarte el Top 5 formateado en una tabla HTML.
+   * Opcionalmente, usa el nodo Google Sheets para registrar todas las búsquedas que habéis hecho históricamente.
+Fase 4: Implementación y Pruebas (Tu entorno local)
+Veo que tienes una ruta de red configurada: \\192.168.5.212\ander\n8n\busqueda_ofertas_equipos.
+1. Guarda tu progreso: Utiliza esa carpeta compartida para guardar backups de tus workflows. En n8n, puedes darle a Download Workflow y guardar el archivo .json en esa ruta.
+2. Prueba por componentes: No intentes montar todo de golpe.
+   * Día 1: Haz funcionar solo el Trigger y la llamada a una sola API (ej. SerpAPI). Comprueba que recibes el JSON correcto.
+   * Día 2: Añade la segunda API y unifica los datos.
+   * Día 3: Crea el código de filtrado para sacar el Top 5.
+   * Día 4: Configura el email de salida.
+Ejemplo del Código de Filtrado (Nodo Code)
+Para cuando llegues al paso 5, necesitarás un código parecido a este para ordenar por precio y sacar los 5 mejores:
+
+
+JavaScript
+
+
+
+
+// Asumiendo que has unificado todos los items y tienen la propiedad 'price'
+let productos = $input.all().map(item => item.json);
+
+// Filtrar si es necesario (ej. que no valgan 0 o falte el precio)
+productos = productos.filter(p => p.price && p.price > 0);
+
+// Ordenar de más barato a más caro
+productos.sort((a, b) => a.price - b.price);
+
+// Quedarse con el Top 5
+let top5 = productos.slice(0, 5);
+
+// Devolver a n8n
+return top5.map(p => ({ json: p }));
+
+Siguiente paso
+Para empezar, te sugiero que vayas a SerpApi.com o un servicio similar, crees una cuenta gratuita (te dan unas 100 búsquedas al mes gratis para probar) y leas su documentación sobre Google Shopping.
+¿Quieres que profundicemos en cómo configurar el nodo HTTP para hacer web scraping a una tienda sin API, o prefieres que veamos cómo estructurar el Webhook de entrada?
