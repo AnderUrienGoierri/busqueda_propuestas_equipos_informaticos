@@ -1,0 +1,30 @@
+====================================================================
+  PETICIONES DE EJEMPLO PARA EL FLUJO DE HARDWARE B2B (n8n)
+====================================================================
+Puedes copiar y pegar cualquiera de estos textos como entrada (input)
+para simular peticiones reales de clientes o empleados.
+
+--------------------------------------------------------------------
+EJEMPLO 1: Portátil de Alto Rendimiento (Diseño / Gaming)
+--------------------------------------------------------------------
+"Necesitamos un portátil enfocado al diseño gráfico, renderizado 3D y edición de vídeo en 4K. Tiene que tener al menos 32GB de RAM y una tarjeta gráfica dedicada muy potente, preferiblemente una NVIDIA RTX 4070 o RTX 4080. El almacenamiento mínimo debe ser 1TB SSD. El presupuesto máximo autorizado por el departamento financiero es de 2100 euros. Si es de las marcas ASUS ROG, MSI o Lenovo Legion, mucho mejor."
+
+--------------------------------------------------------------------
+EJEMPLO 2: Equipo de Oficina Eficiente (Sobremesa)
+--------------------------------------------------------------------
+"Estamos buscando renovar varios equipos de administración. Nos sirve un PC de sobremesa que sea rápido para ofimática pesada, macros de Excel y software de gestión ERP. Con 16GB de RAM y un procesador Intel Core i5 o Ryzen 5 de última generación nos vale. No hace falta gráfica dedicada porque no se va a usar para diseño. Necesitamos que cueste como máximo 650€ por equipo."
+
+--------------------------------------------------------------------
+EJEMPLO 3: Portátil Ultraligero para Movilidad (Comerciales)
+--------------------------------------------------------------------
+"Busco un portátil muy ligero para los comerciales que viajan constantemente. La pantalla debe ser de 13 o 14 pulgadas como máximo para que quepa en cualquier maletín. Necesito que tenga 16GB de RAM, un procesador eficiente y 512GB de disco duro SSD. No me importa si no tiene tarjeta gráfica potente, me importa más la portabilidad. El presupuesto ronda los 1100€. Preferencia por HP EliteBook, Dell Latitude o Apple."
+
+--------------------------------------------------------------------
+EJEMPLO 4: Portátil Económico Estándar (Estudiantes/Básico)
+--------------------------------------------------------------------
+"Hola, busco un portátil barato para uso básico: navegar por internet, ver Netflix y hacer trabajos de la universidad. Me gustaría que tuviera pantalla de 15.6 pulgadas, al menos 8GB de RAM (si son 16GB mejor) y un disco SSD de 256GB o 512GB. Mi presupuesto es muy ajustado, como mucho 450 euros."
+
+--------------------------------------------------------------------
+EJEMPLO 5: Sobremesa Workstation (Programación / Datos)
+--------------------------------------------------------------------
+"Requiero un ordenador de sobremesa para desarrollo de software y análisis de datos. Debe contar con un procesador muy potente (un Intel Core i7, i9 o Ryzen 7/9) y al menos 64GB de RAM para montar máquinas virtuales y contenedores Docker. El almacenamiento tiene que ser rápido, mínimo 2TB SSD NVMe. La gráfica no es la prioridad pero una RTX 3060 o 4060 básica estaría bien. Presupuesto tope: 1800€."
