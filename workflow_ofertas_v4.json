@@ -1,0 +1,798 @@
+{
+  "name": "Buscador Ofertas Hardware v4 - PDF Corporativo",
+  "nodes": [
+    {
+      "id": "n01",
+      "name": "Local File Trigger",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1360,
+        300
+      ],
+      "parameters": {
+        "triggerOn": "folder",
+        "path": "/n8n-watch/busqueda_ofertas_equipos/peticiones_oferta",
+        "events": [
+          "add"
+        ],
+        "options": {
+          "awaitWriteFinish": true,
+          "usePolling": true
+        }
+      }
+    },
+    {
+      "id": "n02",
+      "name": "Read Text File",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -1140,
+        300
+      ],
+      "parameters": {
+        "command": "=cat \"{{$json.path}}\""
+      }
+    },
+    {
+      "id": "n03",
+      "name": "Ollama Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -920,
+        300
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.5.152:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "qwen2.5:14b"
+            },
+            {
+              "name": "prompt",
+              "value": "=Analiza esta petición: '{{$json.stdout}}'. Extrae JSON con: \"keywords\" (array 3-4 términos clave), \"presupuesto\" (entero €), \"tipo\" (\"Portatil\" o \"Sobremesa\"), \"pMin\" (30% del presupuesto entero), \"must\" (array 2 requisitos imprescindibles), \"nice\" (array 2 deseables). Responde SOLO el JSON."
+            },
+            {
+              "name": "stream",
+              "value": false
+            },
+            {
+              "name": "format",
+              "value": "json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n04",
+      "name": "Preparar Busqueda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -700,
+        300
+      ],
+      "parameters": {
+        "jsCode": "\nlet res;\ntry { res = JSON.parse($input.item.json.response || '{}'); } catch(e) { res = {}; }\nconst q           = Array.isArray(res.keywords) ? res.keywords.join(' ') : (res.keywords || 'PC sobremesa');\nconst presupuesto = Number(res.presupuesto) || 1000;\nconst pMin        = Number(res.pMin) || Math.round(presupuesto * 0.30);\nconst tipo        = res.tipo || 'Sobremesa';\nconst must        = Array.isArray(res.must) ? res.must : [];\nconst nice        = Array.isArray(res.nice) ? res.nice : [];\nreturn [{ json: { q, pMax: presupuesto, pMin, tipo, must, nice, retryCount: 0 } }];\n"
+      }
+    },
+    {
+      "id": "n05",
+      "name": "PcComponentes Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -380,
+        0
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?q={{$json.q}}+site:pccomponentes.com&num=10&gl=es&hl=es&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": {}
+      }
+    },
+    {
+      "id": "n06",
+      "name": "Amazon Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -380,
+        200
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "url": "=https://api.rainforestapi.com/request?api_key=8531EA9640A248D0B0C517E23131F9A5&type=search&amazon_domain=amazon.es&search_term={{$json.q}}&sort_by=price_low_to_high",
+        "options": {}
+      }
+    },
+    {
+      "id": "n07",
+      "name": "Coolmod Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -380,
+        400
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?q={{$json.q}}+site:coolmod.com&num=10&gl=es&hl=es&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": {}
+      }
+    },
+    {
+      "id": "n08",
+      "name": "MediaMarkt Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -380,
+        600
+      ],
+      "continueOnFail": true,
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?q={{$json.q}}+site:mediamarkt.es&num=10&gl=es&hl=es&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": {}
+      }
+    },
+    {
+      "id": "n09",
+      "name": "Norm PcComponentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -120,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================\n// NORM PCCOMPONENTES - Calidad de Producto & Specs\n// ============================================================\nconst STORE = 'PcComponentes';\nconst DOMAIN = 'pccomponentes.com';\n\nlet inputData = {};\ntry { inputData = $input.first().json || {}; } catch (e) { inputData = {}; }\n\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\nconst pMin = Number(pCfg.pMin) || 15;\nconst pMax = Number(pCfg.pMax) || 99999;\nconst tipo = String(pCfg.tipo || '').toLowerCase();\n\nconst noAccent = (s) => {\n  if (!s) return '';\n  return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n};\n\n// Palabras prohibidas para evitar accesorios, servicios o piezas sueltas\nconst JUNK_WORDS = ['funda', 'maletin', 'mochila', 'seguro', 'garantia', 'montaje', 'instalacion', 'soporte', 'cable', 'adaptador', 'limpieza', 'reparacion', 'teclado para', 'bateria para', 'cargador'];\n\nconst extractPrices = (text) => {\n  if (!text) return [];\n  const out = [];\n  const re = /(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?)\\s*(?:€|euros|eur|(?=\\s|$))/gi;\n  let m;\n  const str = String(text);\n  while ((m = re.exec(str)) !== null) {\n    let n = m[1].replace(/\\./g, '').replace(',', '.');\n    const v = parseFloat(n);\n    if (!isNaN(v) && v > 5) out.push(v);\n  }\n  return out;\n};\n\nconst scoreProduct = (title, snippet) => {\n  const t = String(title || '');\n  const s = String(snippet || '');\n  const text = noAccent(t + ' ' + s);\n  let score = 0;\n  \n  // Prioridad maxima al TIPO (Portatil, etc)\n  if (tipo && text.indexOf(tipo) !== -1) score += 50;\n  \n  // Penalizacion por palabras sospechosas de ser accesorios\n  for (var i = 0; i < JUNK_WORDS.length; i++) {\n    if (noAccent(t).indexOf(JUNK_WORDS[i]) !== -1) { score -= 100; break; }\n  }\n\n  for (var i = 0; i < must.length; i++) {\n    if (must[i] && text.indexOf(noAccent(must[i])) !== -1) score += 10;\n  }\n  for (var i = 0; i < nice.length; i++) {\n    if (nice[i] && text.indexOf(noAccent(nice[i])) !== -1) score += 3;\n  }\n  return score;\n};\n\nconst products = [];\n\n// 1) Organic\nconst organic = inputData.organic_results;\nif (organic && Array.isArray(organic)) {\n  for (var i = 0; i < organic.length; i++) {\n    const r = organic[i];\n    if (!r || !r.link || !r.title) continue;\n    const link = String(r.link).toLowerCase();\n    if (link.indexOf('/category/') !== -1 || link.indexOf('/c/') !== -1 || link.indexOf('/buscar') !== -1) continue;\n\n    let price = 0;\n    if (r.rich_snippet && r.rich_snippet.top && r.rich_snippet.top.detected_extensions && r.rich_snippet.top.detected_extensions.price) {\n      price = Number(r.rich_snippet.top.detected_extensions.price);\n    } else if (r.rich_snippet && r.rich_snippet.bottom && r.rich_snippet.bottom.detected_extensions && r.rich_snippet.bottom.detected_extensions.price) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price);\n    }\n    if (!price) {\n      const ps = extractPrices(String(r.title) + ' ' + String(r.snippet || ''));\n      if (ps.length > 0) price = ps[0];\n    }\n    if (price <= 0) continue;\n\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.snippet || '',\n      score: scoreProduct(r.title, r.snippet || '')\n    });\n  }\n}\n\n// 2) Shopping\nconst shopping = inputData.shopping_results;\nif (shopping && Array.isArray(shopping)) {\n  for (var i = 0; i < shopping.length; i++) {\n    const r = shopping[i];\n    if (!r || !r.link || !r.title) continue;\n    const merchant = String(r.source || '').toLowerCase();\n    if (merchant.indexOf('pccomponentes') === -1 && String(r.link).toLowerCase().indexOf(DOMAIN) === -1) continue;\n    const price = Number(r.extracted_price) || 0;\n    if (price <= 0) continue;\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.price || '',\n      score: scoreProduct(r.title, r.title)\n    });\n  }\n}\n\n// Deduplicar y Filtrar Calidad\nconst seen = {};\nconst dedup = [];\nfor (var i = 0; i < products.length; i++) {\n  const p = products[i];\n  const key = String(p.link).split('?')[0].toLowerCase();\n  if (!seen[key]) {\n    seen[key] = true;\n    // Si el score es negativo (es junk), lo saltamos a menos que no tengamos nada mas\n    if (p.score < -20) continue; \n    dedup.push(p);\n  }\n}\n\n// Ordenar: 1. Score (Relevancia), 2. Si esta cerca del presupuesto razonable, 3. Precio\ndedup.sort((a, b) => {\n  if (Math.abs(b.score - a.score) > 5) return b.score - a.score;\n  // Priorizar los que estan por encima del pMin (suelo de precio real)\n  const aValid = a.price >= pMin;\n  const bValid = b.price >= pMin;\n  if (aValid !== bValid) return aValid ? -1 : 1;\n  return a.price - b.price;\n});\n\nreturn [{ json: { source: STORE, products: dedup, count: dedup.length } }];\n"
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Norm Amazon",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -120,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// ===========================================================\n// NORM AMAZON - Solo paginas de producto + score de relevancia\n// ===========================================================\n// Acepta SOLO URLs con /dp/ASIN o /gp/product/ASIN (siempre directas).\n// Devuelve TODOS los productos validos con score de relevancia.\n// El nodo HTML decide el top 5 segun score+precio.\n\nconst STORE = 'Amazon';\nconst data = $input.item.json || {};\nconst products = [];\n\n// Parametros del usuario para scoring\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\n\nconst noAccent = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n\nconst parseAmazonPrice = (p) => {\n  if (!p) return 0;\n  if (typeof p.value === 'number' && p.value > 0) return p.value;\n  if (p.raw) {\n    let n = String(p.raw).replace(/ /g, ' ').trim().replace(/[^0-9.,]/g, '');\n    if (n.includes('.') && n.includes(',')) n = n.replace(/\\./g, '').replace(',', '.');\n    else if (n.includes(',')) n = n.replace(',', '.');\n    const v = parseFloat(n);\n    return isFinite(v) ? v : 0;\n  }\n  return 0;\n};\n\n// SOLO paginas de producto reales de Amazon\nconst isAmazonProduct = (url) => {\n  if (!url) return false;\n  const u = String(url).toLowerCase();\n  return /\\/dp\\/[A-Z0-9]{8,12}/i.test(url) || /\\/gp\\/product\\/[A-Z0-9]{8,12}/i.test(url);\n};\n\n// Limpia URL de tracking pero mantiene /dp/<ASIN> para que abra el producto\nconst cleanAmazonUrl = (url) => {\n  try {\n    const m = url.match(/(\\/(?:dp|gp\\/product)\\/[A-Z0-9]{8,12})/i);\n    if (m) return 'https://www.amazon.es' + m[1];\n    return url.split('?')[0];\n  } catch (e) { return url; }\n};\n\nconst isJunkTitle = (title) => {\n  if (!title || title.length < 12) return true;\n  const t = noAccent(title);\n  return ['resultados de', 'ofertas en', 'comprar online', 'amazon basics pack'].some(w => t.includes(w));\n};\n\n// Score: must=10, nice=3\nconst scoreProduct = (title, snippet) => {\n  const text = noAccent(String(title) + ' ' + String(snippet || ''));\n  let score = 0;\n  must.forEach(m => { if (m && text.includes(noAccent(m))) score += 10; });\n  nice.forEach(n => { if (n && text.includes(noAccent(n))) score += 3; });\n  return score;\n};\n\nif (Array.isArray(data.search_results)) {\n  data.search_results.forEach(r => {\n    if (!r || !r.title || !r.link) return;\n    if (!isAmazonProduct(r.link)) return;\n    if (isJunkTitle(r.title)) return;\n    if (r.is_sponsored && (!r.price || !r.price.value)) return;\n\n    const price = parseAmazonPrice(r.price) || parseAmazonPrice(r.price_upper);\n    if (price <= 0) return;\n\n    const link = cleanAmazonUrl(r.link);\n    const snippet = (r.bullet_points && Array.isArray(r.bullet_points) ? r.bullet_points.join(' ') : '')\n                  + ' ' + (r.snippet || '');\n\n    products.push({\n      source: STORE,\n      title: String(r.title).trim(),\n      price,\n      link,\n      snippet,\n      score: scoreProduct(r.title, snippet),\n      image: r.image || ''\n    });\n  });\n}\n\n// Ordenar por relevancia DESC, luego precio ASC\nproducts.sort((a, b) => (b.score - a.score) || (a.price - b.price));\n\nreturn [{ json: { source: STORE, products } }];\n"
+      }
+    },
+    {
+      "id": "n11",
+      "name": "Norm Coolmod",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -120,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================\n// NORM COOLMOD - Calidad de Producto & Specs\n// ============================================================\nconst STORE = 'Coolmod';\nconst DOMAIN = 'coolmod.com';\n\nlet inputData = {};\ntry { inputData = $input.first().json || {}; } catch (e) { inputData = {}; }\n\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\nconst pMin = Number(pCfg.pMin) || 15;\nconst pMax = Number(pCfg.pMax) || 99999;\nconst tipo = String(pCfg.tipo || '').toLowerCase();\n\nconst noAccent = (s) => {\n  if (!s) return '';\n  return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n};\n\nconst JUNK_WORDS = ['funda', 'maletin', 'mochila', 'seguro', 'garantia', 'montaje', 'instalacion', 'soporte', 'cable', 'adaptador', 'limpieza', 'reparacion', 'teclado para', 'bateria para', 'cargador'];\n\nconst extractPrices = (text) => {\n  if (!text) return [];\n  const out = [];\n  const re = /(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?)\\s*(?:€|euros|eur|(?=\\s|$))/gi;\n  let m;\n  const str = String(text);\n  while ((m = re.exec(str)) !== null) {\n    let n = m[1].replace(/\\./g, '').replace(',', '.');\n    const v = parseFloat(n);\n    if (!isNaN(v) && v > 5) out.push(v);\n  }\n  return out;\n};\n\nconst scoreProduct = (title, snippet) => {\n  const t = String(title || '');\n  const s = String(snippet || '');\n  const text = noAccent(t + ' ' + s);\n  let score = 0;\n  if (tipo && text.indexOf(tipo) !== -1) score += 50;\n  for (var i = 0; i < JUNK_WORDS.length; i++) {\n    if (noAccent(t).indexOf(JUNK_WORDS[i]) !== -1) { score -= 100; break; }\n  }\n  for (var i = 0; i < must.length; i++) {\n    if (must[i] && text.indexOf(noAccent(must[i])) !== -1) score += 10;\n  }\n  for (var i = 0; i < nice.length; i++) {\n    if (nice[i] && text.indexOf(noAccent(nice[i])) !== -1) score += 3;\n  }\n  return score;\n};\n\nconst products = [];\n\nconst organic = inputData.organic_results;\nif (organic && Array.isArray(organic)) {\n  for (var i = 0; i < organic.length; i++) {\n    const r = organic[i];\n    if (!r || !r.link || !r.title) continue;\n    const link = String(r.link).toLowerCase();\n    if (link.indexOf('/category/') !== -1 || link.indexOf('/c/') !== -1 || link.indexOf('/buscar') !== -1) continue;\n\n    let price = 0;\n    if (r.rich_snippet && r.rich_snippet.top && r.rich_snippet.top.detected_extensions && r.rich_snippet.top.detected_extensions.price) {\n      price = Number(r.rich_snippet.top.detected_extensions.price);\n    } else if (r.rich_snippet && r.rich_snippet.bottom && r.rich_snippet.bottom.detected_extensions && r.rich_snippet.bottom.detected_extensions.price) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price);\n    }\n    if (!price) {\n      const ps = extractPrices(String(r.title) + ' ' + String(r.snippet || ''));\n      if (ps.length > 0) price = ps[0];\n    }\n    if (price <= 0) continue;\n\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.snippet || '',\n      score: scoreProduct(r.title, r.snippet || '')\n    });\n  }\n}\n\nconst shopping = inputData.shopping_results;\nif (shopping && Array.isArray(shopping)) {\n  for (var i = 0; i < shopping.length; i++) {\n    const r = shopping[i];\n    if (!r || !r.link || !r.title) continue;\n    const merchant = String(r.source || '').toLowerCase();\n    if (merchant.indexOf('coolmod') === -1 && String(r.link).toLowerCase().indexOf(DOMAIN) === -1) continue;\n    const price = Number(r.extracted_price) || 0;\n    if (price <= 0) continue;\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.price || '',\n      score: scoreProduct(r.title, r.title)\n    });\n  }\n}\n\nconst seen = {};\nconst dedup = [];\nfor (var i = 0; i < products.length; i++) {\n  const p = products[i];\n  const key = String(p.link).split('?')[0].toLowerCase();\n  if (!seen[key]) {\n    seen[key] = true;\n    if (p.score < -20) continue; \n    dedup.push(p);\n  }\n}\n\ndedup.sort((a, b) => {\n  if (Math.abs(b.score - a.score) > 5) return b.score - a.score;\n  const aValid = a.price >= pMin;\n  const bValid = b.price >= pMin;\n  if (aValid !== bValid) return aValid ? -1 : 1;\n  return a.price - b.price;\n});\n\nreturn [{ json: { source: STORE, products: dedup, count: dedup.length } }];\n"
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Norm MediaMarkt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -120,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================\n// NORM MEDIAMARKT - Calidad de Producto & Specs\n// ============================================================\nconst STORE = 'MediaMarkt';\nconst DOMAIN = 'mediamarkt.es';\n\nlet inputData = {};\ntry { inputData = $input.first().json || {}; } catch (e) { inputData = {}; }\n\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\nconst pMin = Number(pCfg.pMin) || 15;\nconst pMax = Number(pCfg.pMax) || 99999;\nconst tipo = String(pCfg.tipo || '').toLowerCase();\n\nconst noAccent = (s) => {\n  if (!s) return '';\n  return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n};\n\nconst JUNK_WORDS = ['funda', 'maletin', 'mochila', 'seguro', 'garantia', 'montaje', 'instalacion', 'soporte', 'cable', 'adaptador', 'limpieza', 'reparacion', 'teclado para', 'bateria para', 'cargador'];\n\nconst extractPrices = (text) => {\n  if (!text) return [];\n  const out = [];\n  const re = /(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?)\\s*(?:€|euros|eur|(?=\\s|$))/gi;\n  let m;\n  const str = String(text);\n  while ((m = re.exec(str)) !== null) {\n    let n = m[1].replace(/\\./g, '').replace(',', '.');\n    const v = parseFloat(n);\n    if (!isNaN(v) && v > 5) out.push(v);\n  }\n  return out;\n};\n\nconst scoreProduct = (title, snippet) => {\n  const t = String(title || '');\n  const s = String(snippet || '');\n  const text = noAccent(t + ' ' + s);\n  let score = 0;\n  if (tipo && text.indexOf(tipo) !== -1) score += 50;\n  for (var i = 0; i < JUNK_WORDS.length; i++) {\n    if (noAccent(t).indexOf(JUNK_WORDS[i]) !== -1) { score -= 100; break; }\n  }\n  for (var i = 0; i < must.length; i++) {\n    if (must[i] && text.indexOf(noAccent(must[i])) !== -1) score += 10;\n  }\n  for (var i = 0; i < nice.length; i++) {\n    if (nice[i] && text.indexOf(noAccent(nice[i])) !== -1) score += 3;\n  }\n  return score;\n};\n\nconst products = [];\n\nconst organic = inputData.organic_results;\nif (organic && Array.isArray(organic)) {\n  for (var i = 0; i < organic.length; i++) {\n    const r = organic[i];\n    if (!r || !r.link || !r.title) continue;\n    const link = String(r.link).toLowerCase();\n    if (link.indexOf('/category/') !== -1 || link.indexOf('/c/') !== -1 || link.indexOf('/buscar') !== -1) continue;\n\n    let price = 0;\n    if (r.rich_snippet && r.rich_snippet.top && r.rich_snippet.top.detected_extensions && r.rich_snippet.top.detected_extensions.price) {\n      price = Number(r.rich_snippet.top.detected_extensions.price);\n    } else if (r.rich_snippet && r.rich_snippet.bottom && r.rich_snippet.bottom.detected_extensions && r.rich_snippet.bottom.detected_extensions.price) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price);\n    }\n    if (!price) {\n      const ps = extractPrices(String(r.title) + ' ' + String(r.snippet || ''));\n      if (ps.length > 0) price = ps[0];\n    }\n    if (price <= 0) continue;\n\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.snippet || '',\n      score: scoreProduct(r.title, r.snippet || '')\n    });\n  }\n}\n\nconst shopping = inputData.shopping_results;\nif (shopping && Array.isArray(shopping)) {\n  for (var i = 0; i < shopping.length; i++) {\n    const r = shopping[i];\n    if (!r || !r.link || !r.title) continue;\n    const merchant = String(r.source || '').toLowerCase();\n    if (merchant.indexOf('mediamarkt') === -1 && String(r.link).toLowerCase().indexOf(DOMAIN) === -1) continue;\n    const price = Number(r.extracted_price) || 0;\n    if (price <= 0) continue;\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.price || '',\n      score: scoreProduct(r.title, r.title)\n    });\n  }\n}\n\nconst seen = {};\nconst dedup = [];\nfor (var i = 0; i < products.length; i++) {\n  const p = products[i];\n  const key = String(p.link).split('?')[0].toLowerCase();\n  if (!seen[key]) {\n    seen[key] = true;\n    if (p.score < -20) continue; \n    dedup.push(p);\n  }\n}\n\ndedup.sort((a, b) => {\n  if (Math.abs(b.score - a.score) > 5) return b.score - a.score;\n  const aValid = a.price >= pMin;\n  const bValid = b.price >= pMin;\n  if (aValid !== bValid) return aValid ? -1 : 1;\n  return a.price - b.price;\n});\n\nreturn [{ json: { source: STORE, products: dedup, count: dedup.length } }];\n"
+      }
+    },
+    {
+      "id": "n13",
+      "name": "Merge AB",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        160,
+        100
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "n14",
+      "name": "Merge CD",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        160,
+        500
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "n15",
+      "name": "Merge Final",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        380,
+        300
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "n16",
+      "name": "Unificar Resultados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        600,
+        300
+      ],
+      "parameters": {
+        "jsCode": "\n// Recibe todos los items del Merge Final (4 tiendas combinadas)\nconst allProducts = [];\nconst sourceStats = {};\n$input.all().forEach(item => {\n  const d    = item.json || {};\n  const list = Array.isArray(d.products) ? d.products : [];\n  const src  = d.source || 'Desconocido';\n  sourceStats[src] = (sourceStats[src] || 0) + list.length;\n  allProducts.push(...list);\n});\n\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch(e) {}\nconst pMin = Number(pCfg.pMin) || 0;\nconst pMax = Number(pCfg.pMax) || 99999;\n\n// Deduplicar por URL base\nconst seen = new Set();\nconst dedup = [];\nallProducts.forEach(p => {\n  const key = String(p.link || '').split('?')[0].toLowerCase().trim();\n  if (key && !seen.has(key) && Number(p.price) > 0 && p.title) {\n    seen.add(key);\n    dedup.push(p);\n  }\n});\n\n// Ordenar: dentro de presupuesto primero → score DESC → precio ASC\nconst sortFn = (a,b) => ((b.score||0)-(a.score||0)) || (a.price-b.price);\nconst inBudget  = dedup.filter(p => p.price >= pMin && p.price <= pMax).sort(sortFn);\nconst outBudget = dedup.filter(p => p.price <  pMin || p.price >  pMax).sort(sortFn);\nconst sorted    = [...inBudget, ...outBudget].slice(0, 20);\n\nreturn [{ json: { products: sorted, total: sorted.length, sourceStats, pCfg } }];\n"
+      }
+    },
+    {
+      "id": "n17",
+      "name": "Preparar para Agente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        820,
+        300
+      ],
+      "parameters": {
+        "jsCode": "\nconst data     = $input.first().json;\nconst products = data.products || [];\nconst pCfg     = data.pCfg    || {};\n\nconst listaTxt = products.slice(0,15).map((p,i) =>\n  `${i+1}. TITULO: \"${p.title}\" | PRECIO: ${p.price}€ | TIENDA: ${p.source} | URL: ${p.link}`\n).join('\\n');\n\nconst prompt =\n`Analiza estos ${Math.min(products.length,15)} productos de hardware y devuelve UNICAMENTE un JSON array.\n\nPRODUCTOS:\n${listaTxt}\n\nINSTRUCCIONES:\n1. DESCARTA: fundas, cables, ratones sueltos, teclados, mochilas, garantias, seguros, cargadores.\n2. Para cada equipo VALIDO (PC, portatil, sobremesa, mini-PC) extrae del titulo:\n   MARCA, MODELO, CPU, RAM, GPU, DISCO, SO.\n3. Si un dato no aparece, deducelo del contexto o pon \"Consultar\".\n4. Conserva los campos originales: title, price, link, source.\n\nResponde SOLO el JSON array, sin markdown ni texto adicional.`;\n\nreturn [{ json: { chatInput: prompt, products, pCfg } }];\n"
+      }
+    },
+    {
+      "id": "n18",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1040,
+        300
+      ],
+      "parameters": {
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "Eres un Ingeniero Senior de Compras de Hardware para tiendas españolas. Analizas títulos de productos y extraes especificaciones técnicas. Respondes ÚNICAMENTE con JSON válido, sin markdown ni texto adicional."
+        }
+      }
+    },
+    {
+      "id": "n19",
+      "name": "Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        940,
+        520
+      ],
+      "credentials": {
+        "ollamaApi": {
+          "id": "pg9O0Dpxjc3upDzI",
+          "name": "Ollama account"
+        }
+      },
+      "parameters": {
+        "model": "qwen2.5:14b",
+        "options": {
+          "temperature": 0.1,
+          "numCtx": 8192
+        }
+      }
+    },
+    {
+      "id": "n20",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        1160,
+        520
+      ],
+      "parameters": {
+        "contextWindowLength": 6,
+        "sessionIdType": "customKey",
+        "sessionKey": "hw-search-session-v4"
+      }
+    },
+    {
+      "id": "n21",
+      "name": "Parsear Respuesta Agente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1260,
+        300
+      ],
+      "parameters": {
+        "jsCode": "\nconst agentOut = ($input.first().json.output || '').trim();\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch(e) {}\nlet rawProducts = [];\ntry { rawProducts = $('Unificar Resultados').first().json.products || []; } catch(e) {}\n\nlet enriched = [];\ntry {\n  const cleaned = agentOut.replace(/```json\\s*/gi,'').replace(/```\\s*/gi,'').trim();\n  const s = cleaned.indexOf('['), e2 = cleaned.lastIndexOf(']');\n  enriched = JSON.parse(s !== -1 && e2 > s ? cleaned.substring(s,e2+1) : cleaned);\n} catch(e) {\n  enriched = rawProducts.map(p => ({\n    ...p,\n    MARCA:'Consultar', MODELO:String(p.title||'').substring(0,40),\n    CPU:'Consultar', RAM:'Consultar', GPU:'Consultar', DISCO:'Consultar', SO:'Consultar'\n  }));\n}\n\nconst D = { MARCA:'Consultar', MODELO:'Consultar', CPU:'Consultar',\n            RAM:'Consultar',   GPU:'Consultar',    DISCO:'Consultar', SO:'Consultar' };\nenriched = Array.isArray(enriched) ? enriched.map(p => ({ ...D, ...p })) : [];\nreturn [{ json: { products: enriched, pCfg, total: enriched.length } }];\n"
+      }
+    },
+    {
+      "id": "n22",
+      "name": "Contar Productos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "\nconst data  = $input.first().json;\nconst count = (data.products || []).length;\nreturn [{ json: { ...data, productCount: count } }];\n"
+      }
+    },
+    {
+      "id": "n23",
+      "name": "Validar Calidad",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.productCount }}",
+              "operation": "largerEqual",
+              "value2": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n24",
+      "name": "Generar HTML PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        140
+      ],
+      "parameters": {
+        "jsCode": "// =====================================================\n// GENERACION HTML PDF - v4 (Corporativo + Logo)\n// =====================================================\n// Recibe: $input.first().json = { products:[...], pCfg:{...}, productCount:N }\n\nconst LOGO_B64 = 'iVBORw0KGgoAAAANSUhEUgAAARMAAABkCAMAAACSJyRHAAAAAXNSR0IB2cksfwAAAAlwSFlzAAALEwAACxMBAJqcGAAAAvpQTFRFAAAAT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRT1FRJmun6QAAAP50Uk5TAAgYEAEKa8TXz5IuBZv9/+dLbNwHwytMJoa2uYolCcUtefL6ZQtKzE1ZpOtSAtPLEw12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';\n\n// ── Fuentes de datos ──\nconst _inp   = $input.first().json;\nconst params = _inp.pCfg || {};\n\n// Variables que el cuerpo referencia directamente\nconst STORES = ['Amazon', 'PcComponentes', 'Coolmod', 'MediaMarkt'];\nconst pMax   = Number(params.pMax)  || 9999;\nconst pMin   = Number(params.pMin)  || 0;\nconst tipo   = params.tipo          || 'Equipo';\nconst query  = params.q             || '';\nconst must   = Array.isArray(params.must) ? params.must : [];\nconst nice   = Array.isArray(params.nice) ? params.nice : [];\n\n// Pool de productos (ya enriquecidos por el agente)\nconst allProducts = Array.isArray(_inp.products) ? _inp.products : [];\n\n\n// Helpers\nconst noAccent = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\nconst fmt = (n) => Number(n).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';\nconst esc = (s) => String(s == null ? '' : s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')\n  .replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\nconst today = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });\n\n// 3) Score (por si algun producto no trae score, lo recalculamos)\nconst scoreOf = (p) => {\n  if (typeof p.score === 'number') return p.score;\n  const text = noAccent((p.title || '') + ' ' + (p.snippet || ''));\n  let s = 0;\n  must.forEach(m => { if (m && text.includes(noAccent(m))) s += 10; });\n  nice.forEach(n => { if (n && text.includes(noAccent(n))) s += 3; });\n  return s;\n};\n\n// 4) Preparar pool de productos (IDENTIFICADOS como productos reales por los normalizadores)\n// No filtramos por specs aqui para no quedarnos vacios, el score hara el trabajo.\nconst seen = new Set();\nconst pool = allProducts\n  .filter(p => p && p.link && p.title && Number(p.price) > 0)\n  // Dedup por link (sin query params)\n  .filter(p => {\n    const k = String(p.link).split('?')[0].toLowerCase();\n    if (seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  })\n  .map(p => {\n    const s = scoreOf(p);\n    const inBudget = Number(p.price) >= pMin && Number(p.price) <= pMax;\n    return { ...p, _score: s, _inBudget: inBudget };\n  })\n  // ORDEN CRITICO: \n  // 1. Mayor Score (relevancia)\n  // 2. En presupuesto (preferencia)\n  // 3. Menor Precio (ahorro)\n  .sort((a, b) => {\n    if (b._score !== a._score) return b._score - a._score;\n    if (b._inBudget !== a._inBudget) return b._inBudget ? 1 : -1; // b._inBudget true viene despues si usamos 1? No, queremos true primero.\n    // Correccion: if (a._inBudget && !b._inBudget) return -1;\n    if (a._inBudget !== b._inBudget) return a._inBudget ? -1 : 1;\n    return a.price - b.price;\n  });\n\n// 5) Top 3 global (solo de los que estan en presupuesto si es posible)\nconst inBudgetPool = pool.filter(p => p._inBudget);\nconst top3 = inBudgetPool.length >= 3 ? inBudgetPool.slice(0, 3) : pool.slice(0, 3);\n\n// 6) Top 5 por tienda\nconst byStore = {};\nSTORES.forEach(s => byStore[s] = []);\npool.forEach(p => { \n  if (byStore[p.source] && byStore[p.source].length < 5) {\n    byStore[p.source].push(p); \n  }\n});\n\nconst activeStores = STORES.filter(s => byStore[s].length > 0).length;\nconst bestPrice = inBudgetPool.length ? inBudgetPool[0].price : (pool.length ? pool[0].price : 0);\nconst saving = inBudgetPool.length ? Math.max(0, pMax - inBudgetPool[0].price) : 0;\nconst debugInfo = pool.length + ' productos identificados';\n\n// 7) Parser de specs (AGRESIVO para evitar celdas vacias)\nconst parseSpecs = (title, snippet) => {\n  const t = String(title || '') + ' ' + String(snippet || '');\n  const tl = t.toLowerCase();\n\n  // Brand\n  const brandList = ['Acer', 'ASUS', 'Lenovo', 'HP', 'Dell', 'MSI', 'Gigabyte', 'Samsung', 'Apple', 'Huawei', 'Medion', 'LG', 'Razer', 'Microsoft', 'Dynabook', 'Chuwi', 'Xiaomi', 'Honor', 'Toshiba', 'Fujitsu'];\n  let brand = '';\n  for (const b of brandList) { if (tl.includes(b.toLowerCase())) { brand = b; break; } }\n  if (!brand) {\n    if (tl.includes('macbook') || tl.includes('ipad')) brand = 'Apple';\n    if (tl.includes('thinkpad') || tl.includes('ideapad') || tl.includes('legion')) brand = 'Lenovo';\n    if (tl.includes('victus') || tl.includes('pavilion') || tl.includes('omen')) brand = 'HP';\n    if (tl.includes('vivobook') || tl.includes('zenbook') || tl.includes('rog') || tl.includes('tuf')) brand = 'ASUS';\n  }\n\n  // Pantalla (Pulgadas)\n  let screen = '';\n  const scrM = t.match(/(\\d{2}[.,]\\d)\\s*[\"'”″]/) || \n               t.match(/(\\d{2})\\s*[\"'”″]/) || \n               t.match(/(\\d{2}[.,]\\d)\\s*(?:pulg|p-)/i) ||\n               t.match(/(\\d{2}[.,]\\d)\\s*[']/);\n  if (scrM) screen = (scrM[1] || '').replace(',', '.') + '\"';\n  if (!screen && tl.includes('15.6')) screen = '15.6\"';\n  if (!screen && tl.includes('14')) screen = '14\"';\n  if (!screen && tl.includes('17.3')) screen = '17.3\"';\n\n  // CPU (Procesador)\n  let cpu = '';\n  const cpuM = t.match(/Core\\s+i([3579])[\\s-]*(\\d{4,5}\\w*)/i) || \n               t.match(/Ryzen\\s+([3579])\\s+(\\d{4}\\w*)/i) ||\n               t.match(/\\bi([3579])[\\s-]+(\\d{4,5}\\w*)/i) ||\n               t.match(/\\b(M[1234]\\s*(?:Pro|Max|Ultra)?)\\b/i) ||\n               t.match(/([3579])\\s*(\\d{4,5}[HUK])/i); // Ej: 7 7735HS\n  if (cpuM) {\n    if (cpuM[1] && cpuM[2]) {\n      const type = tl.includes('ryzen') ? 'R' : 'i';\n      cpu = type + cpuM[1] + '-' + cpuM[2];\n    } else {\n      cpu = cpuM[1].trim();\n    }\n  }\n  if (!cpu) {\n    if (tl.includes('intel core i7')) cpu = 'i7';\n    else if (tl.includes('intel core i5')) cpu = 'i5';\n    else if (tl.includes('ryzen 7')) cpu = 'R7';\n    else if (tl.includes('ryzen 5')) cpu = 'R5';\n  }\n\n  // RAM\n  let ram = '';\n  const ramM = t.match(/(\\d{1,2})\\s*GB\\s*(?:RAM|DDR[45]|de RAM|LPDDR)/i) ||\n               t.match(/[\\s/](\\d{1,2})GB[\\s/]/i) ||\n               t.match(/(\\d{1,2})\\s*GB\\s*(?=\\/|SSD|Disco|$)/i);\n  if (ramM) ram = ramM[1] + 'GB';\n  if (!ram && tl.includes('16gb')) ram = '16GB';\n  if (!ram && tl.includes('8gb')) ram = '8GB';\n  if (!ram && tl.includes('32gb')) ram = '32GB';\n\n  // GPU (Gráfica)\n  let gpu = '';\n  const gpuM = t.match(/(RTX)\\s*(\\d{4})\\s*(Ti|S(?:uper)?)?/i) || \n               t.match(/(GTX)\\s*(\\d{4})\\s*(Ti)?/i) || \n               t.match(/(RX)\\s*(\\d{4})\\s*(\\w*)/i) ||\n               t.match(/Graphics\\s+(\\w+\\s*\\w*)/i);\n  if (gpuM) {\n    gpu = gpuM[1].toUpperCase() + (gpuM[2] ? ' ' + gpuM[2] : '') + (gpuM[3] ? ' ' + gpuM[3] : '');\n  }\n  if (!gpu) {\n    if (tl.includes('rtx 4060')) gpu = 'RTX 4060';\n    else if (tl.includes('rtx 4050')) gpu = 'RTX 4050';\n    else if (tl.includes('rtx 3050')) gpu = 'RTX 3050';\n    else if (tl.includes('iris xe')) gpu = 'Iris Xe';\n    else if (tl.includes('radeon')) gpu = 'Radeon';\n  }\n  gpu = gpu.trim();\n\n  // Disco (SSD/HDD)\n  let disk = '';\n  const diskM = t.match(/(\\d+)\\s*TB\\s*SSD/i) || \n                t.match(/(\\d{3,4})\\s*GB\\s*SSD/i) || \n                t.match(/SSD\\s*(?:de\\s*)?(\\d+)\\s*(GB|TB)/i) || \n                t.match(/(\\d+)\\s*(GB|TB)\\s*(?:NVMe|PCIe|M\\.2)/i) ||\n                t.match(/[\\s/](\\d+)(GB|TB)[\\s/]/i);\n  if (diskM) {\n    const v = diskM[1]; const u = (diskM[2] || 'GB').toUpperCase();\n    disk = v + u;\n  }\n  if (!disk) {\n    if (tl.includes('512gb')) disk = '512GB';\n    else if (tl.includes('1tb')) disk = '1TB';\n    else if (tl.includes('256gb')) disk = '256GB';\n  }\n\n  return { brand, screen, cpu, ram, gpu, disk };\n};\n\n// 8) Iconos SVG\nconst ico = {\n  globe: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M2 12h20\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/></svg>',\n  store: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 9l1-5h16l1 5\"/><path d=\"M5 9v11h14V9\"/><path d=\"M9 22V13h6v9\"/></svg>',\n  link: '<svg viewBox=\"0 0 24 24\" width=\"12\" height=\"12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M7 17L17 7\"/><path d=\"M8 7h9v9\"/></svg>',\n  cube: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"/><polyline points=\"3.27 6.96 12 12.01 20.73 6.96\"/><line x1=\"12\" y1=\"22.08\" x2=\"12\" y2=\"12\"/></svg>',\n  tag: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z\"/><line x1=\"7\" y1=\"7\" x2=\"7.01\" y2=\"7\"/></svg>',\n  trend: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"23 6 13.5 15.5 8.5 10.5 1 18\"/><polyline points=\"17 6 23 6 23 12\"/></svg>',\n  spark: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"12 2 15 9 22 10 17 15 18 22 12 19 6 22 7 15 2 10 9 9 12 2\"/></svg>'\n};\n\n// 9) Header\nconst headerHtml = '<header class=\"hdr\"><div class=\"hdr-row\"><div class=\"brand\"><div class=\"brand-mark\">' + ico.cube + '</div><div class=\"brand-text\"><div class=\"eyebrow\">INFORME COMPARATIVO DE OFERTAS</div><h1>Propuesta de Hardware</h1></div></div><div class=\"hdr-meta\"><div class=\"meta-row\"><span class=\"k\">Fecha</span><span class=\"v\">' + esc(today) + '</span></div><div class=\"meta-row\"><span class=\"k\">Categoria</span><span class=\"v\">' + esc(tipo) + '</span></div><div class=\"meta-row\"><span class=\"k\">Presupuesto</span><span class=\"v\">' + fmt(pMax) + '</span></div><div class=\"meta-row\"><span class=\"k\">Terminos</span><span class=\"v\">' + esc(query) + '</span></div></div></div></header>';\n\nconst summaryHtml = '<section class=\"summary\">' +\n  '<div class=\"card stat\"><div class=\"stat-icon\">' + ico.globe + '</div><div class=\"stat-body\"><span class=\"stat-label\">Ofertas analizadas</span><span class=\"stat-value\">' + debugInfo + '</span></div></div>' +\n  '<div class=\"card stat\"><div class=\"stat-icon\">' + ico.store + '</div><div class=\"stat-body\"><span class=\"stat-label\">Tiendas con resultados</span><span class=\"stat-value\">' + activeStores + ' / ' + STORES.length + '</span></div></div>' +\n  '<div class=\"card stat\"><div class=\"stat-icon\">' + ico.tag + '</div><div class=\"stat-body\"><span class=\"stat-label\">Mejor precio</span><span class=\"stat-value\">' + (pool.length ? fmt(bestPrice) : '—') + '</span></div></div>' +\n  '<div class=\"card stat\"><div class=\"stat-icon\">' + ico.trend + '</div><div class=\"stat-body\"><span class=\"stat-label\">Ahorro vs presupuesto</span><span class=\"stat-value\">' + (pool.length ? fmt(saving) : '—') + '</span></div></div>' +\n'</section>';\n\n// 10) Top 3 global con specs\nconst specHeaders = '<th class=\"th-sm\">Marca</th><th class=\"th-sm\">Pant.</th><th class=\"th-sm\">CPU</th><th class=\"th-sm\">RAM</th><th class=\"th-sm\">GPU</th><th class=\"th-sm\">Disco</th>';\n\nconst top3Rows = top3.length\n  ? top3.map((p, i) => {\n      const sp = parseSpecs(p.title, p.snippet);\n      const overTag = !p._inBudget ? '<span class=\"tag-warn\">+presup.</span>' : '';\n      return '<tr>' +\n        '<td class=\"rank-cell\"><span class=\"rank rank-' + (i + 1) + '\">' + (i + 1) + '</span></td>' +\n        '<td class=\"spec-cell brand-cell\">' + esc(sp.brand || '-') + '</td>' +\n        '<td class=\"spec-cell\">' + esc(sp.screen || '-') + '</td>' +\n        '<td class=\"spec-cell cpu-cell\">' + esc(sp.cpu || '-') + '</td>' +\n        '<td class=\"spec-cell\">' + esc(sp.ram || '-') + '</td>' +\n        '<td class=\"spec-cell gpu-cell\">' + esc(sp.gpu || '-') + '</td>' +\n        '<td class=\"spec-cell\">' + esc(sp.disk || '-') + '</td>' +\n        '<td class=\"store-cell\"><span class=\"chip\">' + esc(p.source) + '</span></td>' +\n        '<td class=\"price-cell\">' + fmt(p.price) + ' ' + overTag + '</td>' +\n        '<td class=\"action-cell\"><a class=\"btn-primary\" href=\"' + esc(p.link) + '\" target=\"_blank\" rel=\"noopener\">' + ico.link + '<span>Ver</span></a></td>' +\n      '</tr>';\n    }).join('')\n  : '<tr><td colspan=\"10\" class=\"empty\">Sin resultados validos. Revisa la peticion o el presupuesto.</td></tr>';\n\nconst top3Html = '<section class=\"block hero\">' +\n  '<div class=\"block-hd\"><div class=\"block-icon block-icon-primary\">' + ico.spark + '</div><div><h2>Top 3 - Recomendacion global</h2><p class=\"sub\">Las mejores ofertas por relevancia (specs) y precio encontradas.</p></div></div>' +\n  '<table class=\"table table-specs\">' +\n    '<thead><tr><th class=\"th-rank\">#</th>' + specHeaders + '<th class=\"th-sm\">Tienda</th><th class=\"th-price\">Precio</th><th class=\"th-act\">Enlace</th></tr></thead>' +\n    '<tbody>' + top3Rows + '</tbody>' +\n  '</table>' +\n'</section>';\n\n// 11) Por tienda - top 5\nconst storeBlocks = STORES.map(store => {\n  const items = byStore[store];\n  const rows = items.length\n    ? items.map((p, i) => {\n        const sp = parseSpecs(p.title, p.snippet);\n        const overTag = !p._inBudget ? '<span class=\"tag-warn\">+presup.</span>' : '';\n        return '<tr>' +\n          '<td class=\"rank-cell\"><span class=\"rank rank-store\">' + (i + 1) + '</span></td>' +\n          '<td class=\"spec-cell brand-cell\">' + esc(sp.brand || '-') + '</td>' +\n          '<td class=\"spec-cell\">' + esc(sp.screen || '-') + '</td>' +\n          '<td class=\"spec-cell cpu-cell\">' + esc(sp.cpu || '-') + '</td>' +\n          '<td class=\"spec-cell\">' + esc(sp.ram || '-') + '</td>' +\n          '<td class=\"spec-cell gpu-cell\">' + esc(sp.gpu || '-') + '</td>' +\n          '<td class=\"spec-cell\">' + esc(sp.disk || '-') + '</td>' +\n          '<td class=\"price-cell\">' + fmt(p.price) + ' ' + overTag + '</td>' +\n          '<td class=\"action-cell\"><a class=\"btn-secondary\" href=\"' + esc(p.link) + '\" target=\"_blank\" rel=\"noopener\">' + ico.link + '<span>Abrir</span></a></td>' +\n        '</tr>';\n      }).join('')\n    : '<tr><td colspan=\"9\" class=\"empty\">Sin productos directos encontrados en esta tienda.</td></tr>';\n  return '<section class=\"block store-block\">' +\n    '<div class=\"block-hd\"><div class=\"block-icon\">' + ico.store + '</div><div><h3>' + esc(store) + ' <span class=\"muted\">- Top 5</span></h3><p class=\"sub\">' + items.length + ' producto(s) encontrado(s).</p></div></div>' +\n    '<table class=\"table table-specs\">' +\n      '<thead><tr><th class=\"th-rank\">#</th>' + specHeaders + '<th class=\"th-price\">Precio</th><th class=\"th-act\">Enlace</th></tr></thead>' +\n      '<tbody>' + rows + '</tbody>' +\n    '</table>' +\n  '</section>';\n}).join('');\n\nconst footerHtml = '<footer class=\"ftr\"><div class=\"ftr-l\">Generado automaticamente con n8n + Ollama (Llama 3.2) - Datos en tiempo real via Rainforest API y SerpApi.</div><div class=\"ftr-r\">' + esc(today) + '</div></footer>';\n\nconst sectionTitle = '<div class=\"section-title\">' + ico.store + '<span>Detalle por tienda - Top 5</span><span class=\"bar\"></span></div>';\n\n// 12) CSS\nconst css = ':root{--bg:#f5f7fa;--surface:#fff;--surface-2:#f1f5f9;--ink:#0f172a;--ink-soft:#334155;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--accent-soft:#dbeafe;--price:#047857;--price-bg:#ecfdf5;--warn:#b45309;--warn-bg:#fef3c7;--r:10px;--r-sm:6px}'\n+ '*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,-apple-system,sans-serif;font-size:10px;line-height:1.4;-webkit-font-smoothing:antialiased}'\n+ '.page{max-width:1020px;margin:0 auto;padding:24px 28px 20px}'\n+ '.hdr{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 100%);color:#fff;border-radius:var(--r);padding:20px 24px;margin-bottom:16px;box-shadow:0 8px 24px -12px rgba(15,23,42,.35)}'\n+ '.hdr-row{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}'\n+ '.brand{display:flex;gap:12px;align-items:center}'\n+ '.brand-logo{height:44px;width:auto;object-fit:contain;filter:brightness(0) invert(1);margin-right:4px}'\n+ '.brand-mark{width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;color:#fff}'\n+ '.eyebrow{font-size:8.5px;letter-spacing:2px;color:#cbd5e1;font-weight:600;text-transform:uppercase}'\n+ '.brand-text h1{margin:2px 0 0;font-size:19px;font-weight:700;letter-spacing:-.3px;color:#fff}'\n+ '.hdr-meta{min-width:260px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:var(--r-sm);padding:9px 12px}'\n+ '.meta-row{display:flex;justify-content:space-between;gap:16px;padding:2px 0;font-size:10px}'\n+ '.meta-row + .meta-row{border-top:1px solid rgba(255,255,255,.08)}'\n+ '.meta-row .k{color:#94a3b8;font-weight:500}.meta-row .v{color:#fff;font-weight:600}'\n+ '.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}'\n+ '.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;box-shadow:0 1px 2px rgba(15,23,42,.04)}'\n+ '.stat{display:flex;gap:10px;align-items:center}'\n+ '.stat-icon{width:32px;height:32px;flex-shrink:0;border-radius:7px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center}'\n+ '.stat-body{display:flex;flex-direction:column;gap:1px}'\n+ '.stat-label{font-size:8.5px;color:var(--muted);font-weight:600;letter-spacing:.4px;text-transform:uppercase}'\n+ '.stat-value{font-size:16px;color:var(--ink);font-weight:700;letter-spacing:-.3px;font-variant-numeric:tabular-nums}'\n+ '.block{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px 10px;margin-bottom:12px;box-shadow:0 1px 2px rgba(15,23,42,.04);page-break-inside:avoid}'\n+ '.block.hero{border-color:var(--accent-soft);box-shadow:0 4px 14px -8px rgba(37,99,235,.25)}'\n+ '.block-hd{display:flex;align-items:center;gap:10px;margin-bottom:10px}'\n+ '.block-icon{width:32px;height:32px;border-radius:7px;background:var(--surface-2);color:var(--ink-soft);display:flex;align-items:center;justify-content:center;border:1px solid var(--line);flex-shrink:0}'\n+ '.block-icon-primary{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-soft)}'\n+ '.block-hd h2{margin:0;font-size:13px;font-weight:700;color:var(--ink)}'\n+ '.block-hd h3{margin:0;font-size:12px;font-weight:700;color:var(--ink)}'\n+ '.block-hd .muted{color:var(--muted);font-weight:500}'\n+ '.sub{margin:1px 0 0;font-size:9.5px;color:var(--muted)}'\n+ '.section-title{display:flex;align-items:center;gap:8px;margin:18px 0 8px;padding:0 4px;color:var(--ink);font-size:11px;font-weight:700;letter-spacing:.2px;text-transform:uppercase}'\n+ '.section-title .bar{flex:1;height:1px;background:var(--line)}'\n+ '.table{width:100%;border-collapse:separate;border-spacing:0}'\n+ '.table-specs{font-size:9px}'\n+ '.table th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-size:8px;padding:6px 5px;border-bottom:1px solid var(--line);background:var(--surface-2);white-space:nowrap}'\n+ '.table th:first-child{border-top-left-radius:var(--r-sm)}'\n+ '.table th:last-child{border-top-right-radius:var(--r-sm)}'\n+ '.table td{padding:7px 5px;border-bottom:1px solid var(--line);vertical-align:middle;color:var(--ink-soft)}'\n+ '.table tbody tr:last-child td{border-bottom:none}'\n+ '.th-rank{width:28px;text-align:center}'\n+ '.th-sm{}'\n+ '.th-price{width:90px;text-align:right}'\n+ '.th-act{width:68px;text-align:right}'\n+ '.rank-cell{text-align:center}'\n+ '.rank{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-weight:700;font-size:9px;color:#fff;background:var(--ink-soft)}'\n+ '.rank-1{background:#0f172a}.rank-2{background:#334155}.rank-3{background:#64748b}'\n+ '.rank-store{background:var(--accent);color:#fff}'\n+ '.spec-cell{font-size:9px;color:var(--ink);white-space:nowrap}'\n+ '.brand-cell{font-weight:600}'\n+ '.cpu-cell,.gpu-cell{font-family:Consolas,Monaco,monospace;font-size:8.5px;color:var(--ink-soft)}'\n+ '.price-cell{text-align:right;font-weight:700;color:var(--price);background:var(--price-bg);font-variant-numeric:tabular-nums;white-space:nowrap}'\n+ '.action-cell{text-align:right}'\n+ '.store-cell{}'\n+ '.chip{display:inline-block;padding:2px 7px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);font-size:8.5px;font-weight:600;color:var(--ink-soft)}'\n+ '.tag-warn{display:inline-block;padding:1px 5px;border-radius:99px;background:var(--warn-bg);color:var(--warn);font-size:7.5px;font-weight:700;margin-left:4px;vertical-align:middle}'\n+ '.btn-primary,.btn-secondary{display:inline-flex;align-items:center;gap:4px;text-decoration:none;font-weight:600;font-size:8.5px;padding:4px 8px;border-radius:var(--r-sm);white-space:nowrap}'\n+ '.btn-primary{background:var(--accent);color:#fff;border:1px solid var(--accent)}'\n+ '.btn-secondary{background:#fff;color:var(--accent);border:1px solid #c7dafd}'\n+ '.empty{text-align:center;color:var(--muted);font-style:italic;padding:14px}'\n+ '.ftr{display:flex;justify-content:space-between;font-size:8.5px;color:var(--muted);margin-top:14px;padding-top:10px;border-top:1px solid var(--line);gap:20px}'\n+ '@page{size:A4 landscape;margin:10mm}'\n+ '@media print{.block,.summary,.hdr{break-inside:avoid}}';\n\nconst html = '<!DOCTYPE html><html lang=\"es\"><head><meta charset=\"utf-8\">' +\n  '<title>Propuesta de Hardware - ' + esc(tipo) + '</title>' +\n  '<style>' + css + '</style>' +\n'</head><body><div class=\"page\">' +\n  headerHtml + summaryHtml + top3Html + sectionTitle + storeBlocks + footerHtml +\n'</div></body></html>';\n\nreturn [{\n  json: {\n    total: pool.length,\n    totalRaw: allProducts.length,\n    top3: top3.length,\n    stores: STORES.map(s => ({ name: s, count: byStore[s].length })),\n    presupuesto: pMax,\n    precioMinimo: pMin,\n    tipo, query, must, nice\n  },\n  binary: {\n    index: {\n      data: Buffer.from(html, 'utf-8').toString('base64'),\n      mimeType: 'text/html',\n      fileName: 'index.html'\n    }\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "n25",
+      "name": "Gotenberg PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2060,
+        140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://gotenberg:3000/forms/chromium/convert/html",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "files",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "index"
+            },
+            {
+              "name": "paperWidth",
+              "value": "11.69"
+            },
+            {
+              "name": "paperHeight",
+              "value": "8.27"
+            },
+            {
+              "name": "marginTop",
+              "value": "0.4"
+            },
+            {
+              "name": "marginBottom",
+              "value": "0.4"
+            },
+            {
+              "name": "marginLeft",
+              "value": "0.5"
+            },
+            {
+              "name": "marginRight",
+              "value": "0.5"
+            },
+            {
+              "name": "printBackground",
+              "value": "true"
+            },
+            {
+              "name": "preferCssPageSize",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n26",
+      "name": "Guardar PDF",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        2280,
+        140
+      ],
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/n8n-watch/busqueda_ofertas_equipos/propuestas_generadas/informe_{{$now.toFormat('yyyyMMdd_HHmmss')}}.pdf",
+        "dataPropertyName": "data"
+      }
+    },
+    {
+      "id": "n27",
+      "name": "Reformular Busqueda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        480
+      ],
+      "parameters": {
+        "jsCode": "\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch(e) {}\nconst q   = (pCfg.q || 'PC escritorio') + ' oferta calidad precio';\nconst pMax = pCfg.pMax || 1000;\nconst pMin = Math.round((pCfg.pMin || 200) * 0.75);\nreturn [{ json: {\n  q, pMax, pMin,\n  tipo:       pCfg.tipo || 'Sobremesa',\n  must:       pCfg.must || [],\n  nice:       pCfg.nice || [],\n  retryCount: (pCfg.retryCount || 0) + 1\n} }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Local File Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Text File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Text File": {
+      "main": [
+        [
+          {
+            "node": "Ollama Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Extract": {
+      "main": [
+        [
+          {
+            "node": "Preparar Busqueda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Busqueda": {
+      "main": [
+        [
+          {
+            "node": "PcComponentes Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Amazon Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Coolmod Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "MediaMarkt Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PcComponentes Search": {
+      "main": [
+        [
+          {
+            "node": "Norm PcComponentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Amazon Search": {
+      "main": [
+        [
+          {
+            "node": "Norm Amazon",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coolmod Search": {
+      "main": [
+        [
+          {
+            "node": "Norm Coolmod",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MediaMarkt Search": {
+      "main": [
+        [
+          {
+            "node": "Norm MediaMarkt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Norm PcComponentes": {
+      "main": [
+        [
+          {
+            "node": "Merge AB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Norm Amazon": {
+      "main": [
+        [
+          {
+            "node": "Merge AB",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Norm Coolmod": {
+      "main": [
+        [
+          {
+            "node": "Merge CD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Norm MediaMarkt": {
+      "main": [
+        [
+          {
+            "node": "Merge CD",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge AB": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge CD": {
+      "main": [
+        [
+          {
+            "node": "Merge Final",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Final": {
+      "main": [
+        [
+          {
+            "node": "Unificar Resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unificar Resultados": {
+      "main": [
+        [
+          {
+            "node": "Preparar para Agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar para Agente": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Parsear Respuesta Agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Respuesta Agente": {
+      "main": [
+        [
+          {
+            "node": "Contar Productos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contar Productos": {
+      "main": [
+        [
+          {
+            "node": "Validar Calidad",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Calidad": {
+      "main": [
+        [
+          {
+            "node": "Generar HTML PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reformular Busqueda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar HTML PDF": {
+      "main": [
+        [
+          {
+            "node": "Gotenberg PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gotenberg PDF": {
+      "main": [
+        [
+          {
+            "node": "Guardar PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reformular Busqueda": {
+      "main": [
+        [
+          {
+            "node": "PcComponentes Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Amazon Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Coolmod Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "MediaMarkt Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
