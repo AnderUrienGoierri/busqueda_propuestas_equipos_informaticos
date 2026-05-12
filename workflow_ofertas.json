@@ -1,510 +1,240 @@
-﻿{
-    "name":  "Buscador de Ofertas Pro - PDF Corporativo",
-    "nodes":  [
-                  {
-                      "parameters":  {
-                                         "triggerOn":  "folder",
-                                         "path":  "/n8n-watch/busqueda_ofertas_equipos/peticiones_oferta",
-                                         "events":  [
-                                                        "add"
-                                                    ],
-                                         "options":  {
-                                                         "awaitWriteFinish":  true,
-                                                         "usePolling":  true
-                                                     }
-                                     },
-                      "name":  "Local File Trigger",
-                      "type":  "n8n-nodes-base.localFileTrigger",
-                      "typeVersion":  1,
-                      "position":  [
-                                       -420,
-                                       400
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "command":  "=cat \"{{$json.path}}\""
-                                     },
-                      "name":  "Read Text File",
-                      "type":  "n8n-nodes-base.executeCommand",
-                      "typeVersion":  1,
-                      "position":  [
-                                       -220,
-                                       400
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "http://ollama:11434/api/generate",
-                                         "sendBody":  true,
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "model",
-                                                                                       "value":  "llama3.2"
-                                                                                   },
-                                                                                   {
-                                                                                       "name":  "prompt",
-                                                                                       "value":  "=Eres un experto senior en hardware y analista de precios en Amazon, PcComponentes, Coolmod y MediaMarkt. Analiza esta peticion:\n\u0027{{$json.stdout}}\u0027\n\nTu objetivo es generar parametros de busqueda que nos permitan encontrar SIEMPRE al menos 5 productos por tienda, incluso si no cumplen el 100% de los deseos (priorizando los mas cercanos).\n\nDevuelve EXCLUSIVAMENTE un JSON valido con:\n1. \"keywords\": string de 3-4 palabras clave optimizadas (ej: \"portatil gaming rtx 4060\"). Incluye la spec mas critica. SIN ACENTOS.\n2. \"tipo\": (Portatil, Sobremesa, Monitor, Impresora, Tablet, Componente, Periferico).\n3. \"presupuesto_max\": numero entero.\n4. \"precio_minimo_razonable\": tu mejor estimacion del suelo de precio para este tipo de hardware (ej: un i7 con RTX no bajara de 800€). Si no hay specs claras, usa el 30% del maximo.\n5. \"specs_obligatorios\": array de strings (minimo 1, maximo 2). Solo terminos que DEFINEN el producto (ej: [\"portatil\"] o [\"monitor\"]). NO pongas marcas ni numeros aqui para no bloquear resultados.\n6. \"specs_deseables\": array de specs tecnicas (ej: [\"rtx\",\"16gb\",\"144hz\"]). Estos sumaran puntos en el ranking pero NO filtraran.\n\nResponde SOLO el JSON."
-                                                                                   },
-                                                                                   {
-                                                                                       "name":  "stream",
-                                                                                       "value":  false
-                                                                                   },
-                                                                                   {
-                                                                                       "name":  "format",
-                                                                                       "value":  "json"
-                                                                                   }
-                                                                               ]
-                                                            },
-                                         "options":  {
-                                                         "timeout":  300000
-                                                     }
-                                     },
-                      "name":  "Ollama Extract",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "typeVersion":  4,
-                      "position":  [
-                                       -20,
-                                       400
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "jsCode":  "// Normaliza la respuesta de Ollama y prepara parametros enriquecidos para busqueda y filtrado\nlet res = {};\ntry {\n  const raw = $input.item.json.response;\n  res = typeof raw === \u0027string\u0027 ? JSON.parse(raw) : (raw || {});\n} catch (e) { res = {}; }\n\nconst keywords = String(res.keywords || res.tipo || \u0027PC\u0027).trim();\nconst tipo = String(res.tipo || \u0027Equipo\u0027).trim();\nconst pMax = Number(res.presupuesto_max || res.presupuesto) || 1000;\n// Suelo de precio: si Ollama no lo da, asumimos 20% del presupuesto (conservador)\nconst pMinLLM = Number(res.precio_minimo_razonable);\nconst pMin = (pMinLLM \u003e 0 \u0026\u0026 pMinLLM \u003c pMax) ? pMinLLM : Math.max(15, Math.floor(pMax * 0.2));\nconst toArr = (v) =\u003e Array.isArray(v) ? v.map(s =\u003e String(s).toLowerCase().trim()).filter(Boolean) : [];\nconst must = toArr(res.specs_obligatorios);\nconst nice = toArr(res.specs_deseables);\n\nreturn { json: { q: keywords, pMax, pMin, tipo, must, nice } };"
-                                     },
-                      "name":  "Preparar Busqueda",
-                      "type":  "n8n-nodes-base.code",
-                      "typeVersion":  2,
-                      "position":  [
-                                       200,
-                                       400
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "url":  "=https://api.rainforestapi.com/request?api_key=8531EA9640A248D0B0C517E23131F9A5\u0026type=search\u0026amazon_domain=amazon.es\u0026search_term={{encodeURIComponent($json.q)}}",
-                                         "options":  {
-                                                         "timeout":  30000
-                                                     }
-                                     },
-                      "continueOnFail":  true,
-                      "name":  "Amazon",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "typeVersion":  4,
-                      "position":  [
-                                       440,
-                                       100
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "url":  "=https://serpapi.com/search.json?engine=google\u0026q={{encodeURIComponent($json.q + \u0027 site:pccomponentes.com\u0027)}}\u0026hl=es\u0026gl=es\u0026google_domain=google.es\u0026num=50\u0026api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
-                                         "options":  {
-                                                         "timeout":  30000
-                                                     }
-                                     },
-                      "continueOnFail":  true,
-                      "name":  "PcComponentes",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "typeVersion":  4,
-                      "position":  [
-                                       440,
-                                       280
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "url":  "=https://serpapi.com/search.json?engine=google\u0026q={{encodeURIComponent($json.q + \u0027 site:coolmod.com\u0027)}}\u0026hl=es\u0026gl=es\u0026google_domain=google.es\u0026num=50\u0026api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
-                                         "options":  {
-                                                         "timeout":  30000
-                                                     }
-                                     },
-                      "continueOnFail":  true,
-                      "name":  "Coolmod",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "typeVersion":  4,
-                      "position":  [
-                                       440,
-                                       460
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "url":  "=https://serpapi.com/search.json?engine=google\u0026q={{encodeURIComponent($json.q + \u0027 site:mediamarkt.es\u0027)}}\u0026hl=es\u0026gl=es\u0026google_domain=google.es\u0026num=50\u0026api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
-                                         "options":  {
-                                                         "timeout":  30000
-                                                     }
-                                     },
-                      "continueOnFail":  true,
-                      "name":  "MediaMarkt",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "typeVersion":  4,
-                      "position":  [
-                                       440,
-                                       640
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "jsCode":  "// Normaliza respuesta de Rainforest API (Amazon) con validacion de producto\nconst data = $input.item.json || {};\nconst products = [];\n\nconst parseAmazonPrice = (p) =\u003e {\n  if (!p) return 0;\n  if (typeof p.value === \u0027number\u0027) return p.value;\n  if (p.raw) {\n    const txt = String(p.raw).replace(/\\u00a0/g,\u0027 \u0027).trim();\n    let n = txt.replace(/[^0-9.,]/g,\u0027\u0027);\n    if (n.includes(\u0027.\u0027) \u0026\u0026 n.includes(\u0027,\u0027)) n = n.replace(/\\./g,\u0027\u0027).replace(\u0027,\u0027, \u0027.\u0027);\n    else if (n.includes(\u0027,\u0027)) n = n.replace(\u0027,\u0027, \u0027.\u0027);\n    const v = parseFloat(n);\n    return isFinite(v) ? v : 0;\n  }\n  return 0;\n};\n\n// Amazon URLs de producto siempre tienen /dp/ASIN o /gp/product/ASIN\nconst isAmazonProduct = (url) =\u003e {\n  if (!url) return false;\n  const u = String(url).toLowerCase();\n  return u.includes(\u0027/dp/\u0027) || u.includes(\u0027/gp/product/\u0027);\n};\n\nconst isJunkTitle = (title) =\u003e {\n  if (!title || title.length \u003c 12) return true;\n  const t = title.toLowerCase();\n  return [\u0027resultados de\u0027, \u0027ofertas en\u0027, \u0027comprar online\u0027].some(w =\u003e t.includes(w));\n};\n\nif (Array.isArray(data.search_results)) {\n  data.search_results.forEach(r =\u003e {\n    if (!r || !r.title || !r.link) return;\n    if (!isAmazonProduct(r.link)) return;\n    if (isJunkTitle(r.title)) return;\n    // Si Rainforest marca el item como sponsored o video, lo saltamos (suelen ser ruido)\n    if (r.is_sponsored \u0026\u0026 (!r.price || !r.price.value)) return;\n    const price = parseAmazonPrice(r.price) || parseAmazonPrice(r.price_upper);\n    if (price \u003c= 0) return; // sin precio claro, no lo incluimos\n    products.push({ source: \u0027Amazon\u0027, title: String(r.title).trim(), price, link: r.link, image: r.image || \u0027\u0027 });\n  });\n}\nreturn [{ json: { source: \u0027Amazon\u0027, products } }];"
-                                     },
-                      "name":  "Norm Amazon",
-                      "type":  "n8n-nodes-base.code",
-                      "typeVersion":  2,
-                      "position":  [
-                                       660,
-                                       100
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "jsCode":  "// ============================================================\n// NORM PCCOMPONENTES - Calidad de Producto \u0026 Specs\n// ============================================================\nconst STORE = \u0027PcComponentes\u0027;\nconst DOMAIN = \u0027pccomponentes.com\u0027;\n\nlet inputData = {};\ntry { inputData = $input.first().json || {}; } catch (e) { inputData = {}; }\n\nlet pCfg = {};\ntry { pCfg = $(\u0027Preparar Busqueda\u0027).first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\nconst pMin = Number(pCfg.pMin) || 15;\nconst pMax = Number(pCfg.pMax) || 99999;\nconst tipo = String(pCfg.tipo || \u0027\u0027).toLowerCase();\n\nconst noAccent = (s) =\u003e {\n  if (!s) return \u0027\u0027;\n  return String(s).normalize(\u0027NFD\u0027).replace(/[̀-ͯ]/g, \u0027\u0027).toLowerCase();\n};\n\n// Palabras prohibidas para evitar accesorios, servicios o piezas sueltas\nconst JUNK_WORDS = [\u0027funda\u0027, \u0027maletin\u0027, \u0027mochila\u0027, \u0027seguro\u0027, \u0027garantia\u0027, \u0027montaje\u0027, \u0027instalacion\u0027, \u0027soporte\u0027, \u0027cable\u0027, \u0027adaptador\u0027, \u0027limpieza\u0027, \u0027reparacion\u0027, \u0027teclado para\u0027, \u0027bateria para\u0027, \u0027cargador\u0027];\n\nconst extractPrices = (text) =\u003e {\n  if (!text) return [];\n  const out = [];\n  const re = /(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?)\\s*(?:€|euros|eur|(?=\\s|$))/gi;\n  let m;\n  const str = String(text);\n  while ((m = re.exec(str)) !== null) {\n    let n = m[1].replace(/\\./g, \u0027\u0027).replace(\u0027,\u0027, \u0027.\u0027);\n    const v = parseFloat(n);\n    if (!isNaN(v) \u0026\u0026 v \u003e 5) out.push(v);\n  }\n  return out;\n};\n\nconst scoreProduct = (title, snippet) =\u003e {\n  const t = String(title || \u0027\u0027);\n  const s = String(snippet || \u0027\u0027);\n  const text = noAccent(t + \u0027 \u0027 + s);\n  let score = 0;\n  \n  // Prioridad maxima al TIPO (Portatil, etc)\n  if (tipo \u0026\u0026 text.indexOf(tipo) !== -1) score += 50;\n  \n  // Penalizacion por palabras sospechosas de ser accesorios\n  for (var i = 0; i \u003c JUNK_WORDS.length; i++) {\n    if (noAccent(t).indexOf(JUNK_WORDS[i]) !== -1) { score -= 100; break; }\n  }\n\n  for (var i = 0; i \u003c must.length; i++) {\n    if (must[i] \u0026\u0026 text.indexOf(noAccent(must[i])) !== -1) score += 10;\n  }\n  for (var i = 0; i \u003c nice.length; i++) {\n    if (nice[i] \u0026\u0026 text.indexOf(noAccent(nice[i])) !== -1) score += 3;\n  }\n  return score;\n};\n\nconst products = [];\n\n// 1) Organic\nconst organic = inputData.organic_results;\nif (organic \u0026\u0026 Array.isArray(organic)) {\n  for (var i = 0; i \u003c organic.length; i++) {\n    const r = organic[i];\n    if (!r || !r.link || !r.title) continue;\n    const link = String(r.link).toLowerCase();\n    if (link.indexOf(\u0027/category/\u0027) !== -1 || link.indexOf(\u0027/c/\u0027) !== -1 || link.indexOf(\u0027/buscar\u0027) !== -1) continue;\n\n    let price = 0;\n    if (r.rich_snippet \u0026\u0026 r.rich_snippet.top \u0026\u0026 r.rich_snippet.top.detected_extensions \u0026\u0026 r.rich_snippet.top.detected_extensions.price) {\n      price = Number(r.rich_snippet.top.detected_extensions.price);\n    } else if (r.rich_snippet \u0026\u0026 r.rich_snippet.bottom \u0026\u0026 r.rich_snippet.bottom.detected_extensions \u0026\u0026 r.rich_snippet.bottom.detected_extensions.price) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price);\n    }\n    if (!price) {\n      const ps = extractPrices(String(r.title) + \u0027 \u0027 + String(r.snippet || \u0027\u0027));\n      if (ps.length \u003e 0) price = ps[0];\n    }\n    if (price \u003c= 0) continue;\n\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.snippet || \u0027\u0027,\n      score: scoreProduct(r.title, r.snippet || \u0027\u0027)\n    });\n  }\n}\n\n// 2) Shopping\nconst shopping = inputData.shopping_results;\nif (shopping \u0026\u0026 Array.isArray(shopping)) {\n  for (var i = 0; i \u003c shopping.length; i++) {\n    const r = shopping[i];\n    if (!r || !r.link || !r.title) continue;\n    const merchant = String(r.source || \u0027\u0027).toLowerCase();\n    if (merchant.indexOf(\u0027pccomponentes\u0027) === -1 \u0026\u0026 String(r.link).toLowerCase().indexOf(DOMAIN) === -1) continue;\n    const price = Number(r.extracted_price) || 0;\n    if (price \u003c= 0) continue;\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.price || \u0027\u0027,\n      score: scoreProduct(r.title, r.title)\n    });\n  }\n}\n\n// Deduplicar y Filtrar Calidad\nconst seen = {};\nconst dedup = [];\nfor (var i = 0; i \u003c products.length; i++) {\n  const p = products[i];\n  const key = String(p.link).split(\u0027?\u0027)[0].toLowerCase();\n  if (!seen[key]) {\n    seen[key] = true;\n    // Si el score es negativo (es junk), lo saltamos a menos que no tengamos nada mas\n    if (p.score \u003c -20) continue; \n    dedup.push(p);\n  }\n}\n\n// Ordenar: 1. Score (Relevancia), 2. Si esta cerca del presupuesto razonable, 3. Precio\ndedup.sort((a, b) =\u003e {\n  if (Math.abs(b.score - a.score) \u003e 5) return b.score - a.score;\n  // Priorizar los que estan por encima del pMin (suelo de precio real)\n  const aValid = a.price \u003e= pMin;\n  const bValid = b.price \u003e= pMin;\n  if (aValid !== bValid) return aValid ? -1 : 1;\n  return a.price - b.price;\n});\n\nreturn [{ json: { source: STORE, products: dedup, count: dedup.length } }];\n"
-                                     },
-                      "name":  "Norm PcComponentes",
-                      "type":  "n8n-nodes-base.code",
-                      "typeVersion":  2,
-                      "position":  [
-                                       660,
-                                       280
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "jsCode":  "// ============================================================\n// NORM COOLMOD - Calidad de Producto \u0026 Specs\n// ============================================================\nconst STORE = \u0027Coolmod\u0027;\nconst DOMAIN = \u0027coolmod.com\u0027;\n\nlet inputData = {};\ntry { inputData = $input.first().json || {}; } catch (e) { inputData = {}; }\n\nlet pCfg = {};\ntry { pCfg = $(\u0027Preparar Busqueda\u0027).first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\nconst pMin = Number(pCfg.pMin) || 15;\nconst pMax = Number(pCfg.pMax) || 99999;\nconst tipo = String(pCfg.tipo || \u0027\u0027).toLowerCase();\n\nconst noAccent = (s) =\u003e {\n  if (!s) return \u0027\u0027;\n  return String(s).normalize(\u0027NFD\u0027).replace(/[̀-ͯ]/g, \u0027\u0027).toLowerCase();\n};\n\nconst JUNK_WORDS = [\u0027funda\u0027, \u0027maletin\u0027, \u0027mochila\u0027, \u0027seguro\u0027, \u0027garantia\u0027, \u0027montaje\u0027, \u0027instalacion\u0027, \u0027soporte\u0027, \u0027cable\u0027, \u0027adaptador\u0027, \u0027limpieza\u0027, \u0027reparacion\u0027, \u0027teclado para\u0027, \u0027bateria para\u0027, \u0027cargador\u0027];\n\nconst extractPrices = (text) =\u003e {\n  if (!text) return [];\n  const out = [];\n  const re = /(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?)\\s*(?:€|euros|eur|(?=\\s|$))/gi;\n  let m;\n  const str = String(text);\n  while ((m = re.exec(str)) !== null) {\n    let n = m[1].replace(/\\./g, \u0027\u0027).replace(\u0027,\u0027, \u0027.\u0027);\n    const v = parseFloat(n);\n    if (!isNaN(v) \u0026\u0026 v \u003e 5) out.push(v);\n  }\n  return out;\n};\n\nconst scoreProduct = (title, snippet) =\u003e {\n  const t = String(title || \u0027\u0027);\n  const s = String(snippet || \u0027\u0027);\n  const text = noAccent(t + \u0027 \u0027 + s);\n  let score = 0;\n  if (tipo \u0026\u0026 text.indexOf(tipo) !== -1) score += 50;\n  for (var i = 0; i \u003c JUNK_WORDS.length; i++) {\n    if (noAccent(t).indexOf(JUNK_WORDS[i]) !== -1) { score -= 100; break; }\n  }\n  for (var i = 0; i \u003c must.length; i++) {\n    if (must[i] \u0026\u0026 text.indexOf(noAccent(must[i])) !== -1) score += 10;\n  }\n  for (var i = 0; i \u003c nice.length; i++) {\n    if (nice[i] \u0026\u0026 text.indexOf(noAccent(nice[i])) !== -1) score += 3;\n  }\n  return score;\n};\n\nconst products = [];\n\nconst organic = inputData.organic_results;\nif (organic \u0026\u0026 Array.isArray(organic)) {\n  for (var i = 0; i \u003c organic.length; i++) {\n    const r = organic[i];\n    if (!r || !r.link || !r.title) continue;\n    const link = String(r.link).toLowerCase();\n    if (link.indexOf(\u0027/category/\u0027) !== -1 || link.indexOf(\u0027/c/\u0027) !== -1 || link.indexOf(\u0027/buscar\u0027) !== -1) continue;\n\n    let price = 0;\n    if (r.rich_snippet \u0026\u0026 r.rich_snippet.top \u0026\u0026 r.rich_snippet.top.detected_extensions \u0026\u0026 r.rich_snippet.top.detected_extensions.price) {\n      price = Number(r.rich_snippet.top.detected_extensions.price);\n    } else if (r.rich_snippet \u0026\u0026 r.rich_snippet.bottom \u0026\u0026 r.rich_snippet.bottom.detected_extensions \u0026\u0026 r.rich_snippet.bottom.detected_extensions.price) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price);\n    }\n    if (!price) {\n      const ps = extractPrices(String(r.title) + \u0027 \u0027 + String(r.snippet || \u0027\u0027));\n      if (ps.length \u003e 0) price = ps[0];\n    }\n    if (price \u003c= 0) continue;\n\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.snippet || \u0027\u0027,\n      score: scoreProduct(r.title, r.snippet || \u0027\u0027)\n    });\n  }\n}\n\nconst shopping = inputData.shopping_results;\nif (shopping \u0026\u0026 Array.isArray(shopping)) {\n  for (var i = 0; i \u003c shopping.length; i++) {\n    const r = shopping[i];\n    if (!r || !r.link || !r.title) continue;\n    const merchant = String(r.source || \u0027\u0027).toLowerCase();\n    if (merchant.indexOf(\u0027coolmod\u0027) === -1 \u0026\u0026 String(r.link).toLowerCase().indexOf(DOMAIN) === -1) continue;\n    const price = Number(r.extracted_price) || 0;\n    if (price \u003c= 0) continue;\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.price || \u0027\u0027,\n      score: scoreProduct(r.title, r.title)\n    });\n  }\n}\n\nconst seen = {};\nconst dedup = [];\nfor (var i = 0; i \u003c products.length; i++) {\n  const p = products[i];\n  const key = String(p.link).split(\u0027?\u0027)[0].toLowerCase();\n  if (!seen[key]) {\n    seen[key] = true;\n    if (p.score \u003c -20) continue; \n    dedup.push(p);\n  }\n}\n\ndedup.sort((a, b) =\u003e {\n  if (Math.abs(b.score - a.score) \u003e 5) return b.score - a.score;\n  const aValid = a.price \u003e= pMin;\n  const bValid = b.price \u003e= pMin;\n  if (aValid !== bValid) return aValid ? -1 : 1;\n  return a.price - b.price;\n});\n\nreturn [{ json: { source: STORE, products: dedup, count: dedup.length } }];\n"
-                                     },
-                      "name":  "Norm Coolmod",
-                      "type":  "n8n-nodes-base.code",
-                      "typeVersion":  2,
-                      "position":  [
-                                       660,
-                                       460
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "jsCode":  "// ============================================================\n// NORM MEDIAMARKT - Calidad de Producto \u0026 Specs\n// ============================================================\nconst STORE = \u0027MediaMarkt\u0027;\nconst DOMAIN = \u0027mediamarkt.es\u0027;\n\nlet inputData = {};\ntry { inputData = $input.first().json || {}; } catch (e) { inputData = {}; }\n\nlet pCfg = {};\ntry { pCfg = $(\u0027Preparar Busqueda\u0027).first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\nconst pMin = Number(pCfg.pMin) || 15;\nconst pMax = Number(pCfg.pMax) || 99999;\nconst tipo = String(pCfg.tipo || \u0027\u0027).toLowerCase();\n\nconst noAccent = (s) =\u003e {\n  if (!s) return \u0027\u0027;\n  return String(s).normalize(\u0027NFD\u0027).replace(/[̀-ͯ]/g, \u0027\u0027).toLowerCase();\n};\n\nconst JUNK_WORDS = [\u0027funda\u0027, \u0027maletin\u0027, \u0027mochila\u0027, \u0027seguro\u0027, \u0027garantia\u0027, \u0027montaje\u0027, \u0027instalacion\u0027, \u0027soporte\u0027, \u0027cable\u0027, \u0027adaptador\u0027, \u0027limpieza\u0027, \u0027reparacion\u0027, \u0027teclado para\u0027, \u0027bateria para\u0027, \u0027cargador\u0027];\n\nconst extractPrices = (text) =\u003e {\n  if (!text) return [];\n  const out = [];\n  const re = /(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?)\\s*(?:€|euros|eur|(?=\\s|$))/gi;\n  let m;\n  const str = String(text);\n  while ((m = re.exec(str)) !== null) {\n    let n = m[1].replace(/\\./g, \u0027\u0027).replace(\u0027,\u0027, \u0027.\u0027);\n    const v = parseFloat(n);\n    if (!isNaN(v) \u0026\u0026 v \u003e 5) out.push(v);\n  }\n  return out;\n};\n\nconst scoreProduct = (title, snippet) =\u003e {\n  const t = String(title || \u0027\u0027);\n  const s = String(snippet || \u0027\u0027);\n  const text = noAccent(t + \u0027 \u0027 + s);\n  let score = 0;\n  if (tipo \u0026\u0026 text.indexOf(tipo) !== -1) score += 50;\n  for (var i = 0; i \u003c JUNK_WORDS.length; i++) {\n    if (noAccent(t).indexOf(JUNK_WORDS[i]) !== -1) { score -= 100; break; }\n  }\n  for (var i = 0; i \u003c must.length; i++) {\n    if (must[i] \u0026\u0026 text.indexOf(noAccent(must[i])) !== -1) score += 10;\n  }\n  for (var i = 0; i \u003c nice.length; i++) {\n    if (nice[i] \u0026\u0026 text.indexOf(noAccent(nice[i])) !== -1) score += 3;\n  }\n  return score;\n};\n\nconst products = [];\n\nconst organic = inputData.organic_results;\nif (organic \u0026\u0026 Array.isArray(organic)) {\n  for (var i = 0; i \u003c organic.length; i++) {\n    const r = organic[i];\n    if (!r || !r.link || !r.title) continue;\n    const link = String(r.link).toLowerCase();\n    if (link.indexOf(\u0027/category/\u0027) !== -1 || link.indexOf(\u0027/c/\u0027) !== -1 || link.indexOf(\u0027/buscar\u0027) !== -1) continue;\n\n    let price = 0;\n    if (r.rich_snippet \u0026\u0026 r.rich_snippet.top \u0026\u0026 r.rich_snippet.top.detected_extensions \u0026\u0026 r.rich_snippet.top.detected_extensions.price) {\n      price = Number(r.rich_snippet.top.detected_extensions.price);\n    } else if (r.rich_snippet \u0026\u0026 r.rich_snippet.bottom \u0026\u0026 r.rich_snippet.bottom.detected_extensions \u0026\u0026 r.rich_snippet.bottom.detected_extensions.price) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price);\n    }\n    if (!price) {\n      const ps = extractPrices(String(r.title) + \u0027 \u0027 + String(r.snippet || \u0027\u0027));\n      if (ps.length \u003e 0) price = ps[0];\n    }\n    if (price \u003c= 0) continue;\n\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.snippet || \u0027\u0027,\n      score: scoreProduct(r.title, r.snippet || \u0027\u0027)\n    });\n  }\n}\n\nconst shopping = inputData.shopping_results;\nif (shopping \u0026\u0026 Array.isArray(shopping)) {\n  for (var i = 0; i \u003c shopping.length; i++) {\n    const r = shopping[i];\n    if (!r || !r.link || !r.title) continue;\n    const merchant = String(r.source || \u0027\u0027).toLowerCase();\n    if (merchant.indexOf(\u0027mediamarkt\u0027) === -1 \u0026\u0026 String(r.link).toLowerCase().indexOf(DOMAIN) === -1) continue;\n    const price = Number(r.extracted_price) || 0;\n    if (price \u003c= 0) continue;\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.price || \u0027\u0027,\n      score: scoreProduct(r.title, r.title)\n    });\n  }\n}\n\nconst seen = {};\nconst dedup = [];\nfor (var i = 0; i \u003c products.length; i++) {\n  const p = products[i];\n  const key = String(p.link).split(\u0027?\u0027)[0].toLowerCase();\n  if (!seen[key]) {\n    seen[key] = true;\n    if (p.score \u003c -20) continue; \n    dedup.push(p);\n  }\n}\n\ndedup.sort((a, b) =\u003e {\n  if (Math.abs(b.score - a.score) \u003e 5) return b.score - a.score;\n  const aValid = a.price \u003e= pMin;\n  const bValid = b.price \u003e= pMin;\n  if (aValid !== bValid) return aValid ? -1 : 1;\n  return a.price - b.price;\n});\n\nreturn [{ json: { source: STORE, products: dedup, count: dedup.length } }];\n"
-                                     },
-                      "name":  "Norm MediaMarkt",
-                      "type":  "n8n-nodes-base.code",
-                      "typeVersion":  2,
-                      "position":  [
-                                       660,
-                                       640
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "mode":  "append"
-                                     },
-                      "name":  "Merge AM-PC",
-                      "type":  "n8n-nodes-base.merge",
-                      "typeVersion":  2,
-                      "position":  [
-                                       880,
-                                       190
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "mode":  "append"
-                                     },
-                      "name":  "Merge CM-MM",
-                      "type":  "n8n-nodes-base.merge",
-                      "typeVersion":  2,
-                      "position":  [
-                                       880,
-                                       550
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "mode":  "append"
-                                     },
-                      "name":  "Unificar Resultados",
-                      "type":  "n8n-nodes-base.merge",
-                      "typeVersion":  2,
-                      "position":  [
-                                       1080,
-                                       370
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "jsCode":  "// =====================================================\n// PROCESAMIENTO Y GENERACION DE HTML CORPORATIVO\n// =====================================================\n// CAMBIOS:\n//  - Acepta el score que envia cada normalizador.\n//  - Top 5 por tienda SIEMPRE que haya productos validos (no\n//    filtra por must specs, solo por presupuesto).\n//  - Ordena por score DESC, precio ASC.\n//  - Top 3 global = mejores 3 por (score, precio) entre todas.\n//  - Cualquier producto con URL valida (no categoria) se acepta.\n\nconst STORES = [\u0027Amazon\u0027, \u0027PcComponentes\u0027, \u0027Coolmod\u0027, \u0027MediaMarkt\u0027];\n\n// 1) Recoger productos de las 4 fuentes\nconst allProducts = [];\n$input.all().forEach(item =\u003e {\n  if (item \u0026\u0026 item.json \u0026\u0026 Array.isArray(item.json.products)) {\n    allProducts.push(...item.json.products);\n  }\n});\n\n// 2) Parametros de la peticion\nconst params = $(\u0027Preparar Busqueda\u0027).first().json || {};\nconst pMax = Number(params.pMax) || 9999;\nconst pMin = Number(params.pMin) || 0;\nconst tipo = params.tipo || \u0027Equipo\u0027;\nconst query = params.q || \u0027\u0027;\nconst must = Array.isArray(params.must) ? params.must : [];\nconst nice = Array.isArray(params.nice) ? params.nice : [];\n\n// Helpers\nconst noAccent = (s) =\u003e String(s || \u0027\u0027).normalize(\u0027NFD\u0027).replace(/[̀-ͯ]/g, \u0027\u0027).toLowerCase();\nconst fmt = (n) =\u003e Number(n).toLocaleString(\u0027es-ES\u0027, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + \u0027 €\u0027;\nconst esc = (s) =\u003e String(s == null ? \u0027\u0027 : s)\n  .replace(/\u0026/g, \u0027\u0026amp;\u0027).replace(/\u003c/g, \u0027\u0026lt;\u0027).replace(/\u003e/g, \u0027\u0026gt;\u0027)\n  .replace(/\"/g, \u0027\u0026quot;\u0027).replace(/\u0027/g, \u0027\u0026#39;\u0027);\nconst today = new Date().toLocaleDateString(\u0027es-ES\u0027, { day: \u00272-digit\u0027, month: \u0027long\u0027, year: \u0027numeric\u0027 });\n\n// 3) Score (por si algun producto no trae score, lo recalculamos)\nconst scoreOf = (p) =\u003e {\n  if (typeof p.score === \u0027number\u0027) return p.score;\n  const text = noAccent((p.title || \u0027\u0027) + \u0027 \u0027 + (p.snippet || \u0027\u0027));\n  let s = 0;\n  must.forEach(m =\u003e { if (m \u0026\u0026 text.includes(noAccent(m))) s += 10; });\n  nice.forEach(n =\u003e { if (n \u0026\u0026 text.includes(noAccent(n))) s += 3; });\n  return s;\n};\n\n// 4) Preparar pool de productos (IDENTIFICADOS como productos reales por los normalizadores)\n// No filtramos por specs aqui para no quedarnos vacios, el score hara el trabajo.\nconst seen = new Set();\nconst pool = allProducts\n  .filter(p =\u003e p \u0026\u0026 p.link \u0026\u0026 p.title \u0026\u0026 Number(p.price) \u003e 0)\n  // Dedup por link (sin query params)\n  .filter(p =\u003e {\n    const k = String(p.link).split(\u0027?\u0027)[0].toLowerCase();\n    if (seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  })\n  .map(p =\u003e {\n    const s = scoreOf(p);\n    const inBudget = Number(p.price) \u003e= pMin \u0026\u0026 Number(p.price) \u003c= pMax;\n    return { ...p, _score: s, _inBudget: inBudget };\n  })\n  // ORDEN CRITICO: \n  // 1. Mayor Score (relevancia)\n  // 2. En presupuesto (preferencia)\n  // 3. Menor Precio (ahorro)\n  .sort((a, b) =\u003e {\n    if (b._score !== a._score) return b._score - a._score;\n    if (b._inBudget !== a._inBudget) return b._inBudget ? 1 : -1; // b._inBudget true viene despues si usamos 1? No, queremos true primero.\n    // Correccion: if (a._inBudget \u0026\u0026 !b._inBudget) return -1;\n    if (a._inBudget !== b._inBudget) return a._inBudget ? -1 : 1;\n    return a.price - b.price;\n  });\n\n// 5) Top 3 global (solo de los que estan en presupuesto si es posible)\nconst inBudgetPool = pool.filter(p =\u003e p._inBudget);\nconst top3 = inBudgetPool.length \u003e= 3 ? inBudgetPool.slice(0, 3) : pool.slice(0, 3);\n\n// 6) Top 5 por tienda\nconst byStore = {};\nSTORES.forEach(s =\u003e byStore[s] = []);\npool.forEach(p =\u003e { \n  if (byStore[p.source] \u0026\u0026 byStore[p.source].length \u003c 5) {\n    byStore[p.source].push(p); \n  }\n});\n\nconst activeStores = STORES.filter(s =\u003e byStore[s].length \u003e 0).length;\nconst bestPrice = inBudgetPool.length ? inBudgetPool[0].price : (pool.length ? pool[0].price : 0);\nconst saving = inBudgetPool.length ? Math.max(0, pMax - inBudgetPool[0].price) : 0;\nconst debugInfo = pool.length + \u0027 productos identificados\u0027;\n\n// 7) Parser de specs (AGRESIVO para evitar celdas vacias)\nconst parseSpecs = (title, snippet) =\u003e {\n  const t = String(title || \u0027\u0027) + \u0027 \u0027 + String(snippet || \u0027\u0027);\n  const tl = t.toLowerCase();\n\n  // Brand\n  const brandList = [\u0027Acer\u0027, \u0027ASUS\u0027, \u0027Lenovo\u0027, \u0027HP\u0027, \u0027Dell\u0027, \u0027MSI\u0027, \u0027Gigabyte\u0027, \u0027Samsung\u0027, \u0027Apple\u0027, \u0027Huawei\u0027, \u0027Medion\u0027, \u0027LG\u0027, \u0027Razer\u0027, \u0027Microsoft\u0027, \u0027Dynabook\u0027, \u0027Chuwi\u0027, \u0027Xiaomi\u0027, \u0027Honor\u0027, \u0027Toshiba\u0027, \u0027Fujitsu\u0027];\n  let brand = \u0027\u0027;\n  for (const b of brandList) { if (tl.includes(b.toLowerCase())) { brand = b; break; } }\n  if (!brand) {\n    if (tl.includes(\u0027macbook\u0027) || tl.includes(\u0027ipad\u0027)) brand = \u0027Apple\u0027;\n    if (tl.includes(\u0027thinkpad\u0027) || tl.includes(\u0027ideapad\u0027) || tl.includes(\u0027legion\u0027)) brand = \u0027Lenovo\u0027;\n    if (tl.includes(\u0027victus\u0027) || tl.includes(\u0027pavilion\u0027) || tl.includes(\u0027omen\u0027)) brand = \u0027HP\u0027;\n    if (tl.includes(\u0027vivobook\u0027) || tl.includes(\u0027zenbook\u0027) || tl.includes(\u0027rog\u0027) || tl.includes(\u0027tuf\u0027)) brand = \u0027ASUS\u0027;\n  }\n\n  // Pantalla (Pulgadas)\n  let screen = \u0027\u0027;\n  const scrM = t.match(/(\\d{2}[.,]\\d)\\s*[\"\u0027”″]/) || \n               t.match(/(\\d{2})\\s*[\"\u0027”″]/) || \n               t.match(/(\\d{2}[.,]\\d)\\s*(?:pulg|p-)/i) ||\n               t.match(/(\\d{2}[.,]\\d)\\s*[\u0027]/);\n  if (scrM) screen = (scrM[1] || \u0027\u0027).replace(\u0027,\u0027, \u0027.\u0027) + \u0027\"\u0027;\n  if (!screen \u0026\u0026 tl.includes(\u002715.6\u0027)) screen = \u002715.6\"\u0027;\n  if (!screen \u0026\u0026 tl.includes(\u002714\u0027)) screen = \u002714\"\u0027;\n  if (!screen \u0026\u0026 tl.includes(\u002717.3\u0027)) screen = \u002717.3\"\u0027;\n\n  // CPU (Procesador)\n  let cpu = \u0027\u0027;\n  const cpuM = t.match(/Core\\s+i([3579])[\\s-]*(\\d{4,5}\\w*)/i) || \n               t.match(/Ryzen\\s+([3579])\\s+(\\d{4}\\w*)/i) ||\n               t.match(/\\bi([3579])[\\s-]+(\\d{4,5}\\w*)/i) ||\n               t.match(/\\b(M[1234]\\s*(?:Pro|Max|Ultra)?)\\b/i) ||\n               t.match(/([3579])\\s*(\\d{4,5}[HUK])/i); // Ej: 7 7735HS\n  if (cpuM) {\n    if (cpuM[1] \u0026\u0026 cpuM[2]) {\n      const type = tl.includes(\u0027ryzen\u0027) ? \u0027R\u0027 : \u0027i\u0027;\n      cpu = type + cpuM[1] + \u0027-\u0027 + cpuM[2];\n    } else {\n      cpu = cpuM[1].trim();\n    }\n  }\n  if (!cpu) {\n    if (tl.includes(\u0027intel core i7\u0027)) cpu = \u0027i7\u0027;\n    else if (tl.includes(\u0027intel core i5\u0027)) cpu = \u0027i5\u0027;\n    else if (tl.includes(\u0027ryzen 7\u0027)) cpu = \u0027R7\u0027;\n    else if (tl.includes(\u0027ryzen 5\u0027)) cpu = \u0027R5\u0027;\n  }\n\n  // RAM\n  let ram = \u0027\u0027;\n  const ramM = t.match(/(\\d{1,2})\\s*GB\\s*(?:RAM|DDR[45]|de RAM|LPDDR)/i) ||\n               t.match(/[\\s/](\\d{1,2})GB[\\s/]/i) ||\n               t.match(/(\\d{1,2})\\s*GB\\s*(?=\\/|SSD|Disco|$)/i);\n  if (ramM) ram = ramM[1] + \u0027GB\u0027;\n  if (!ram \u0026\u0026 tl.includes(\u002716gb\u0027)) ram = \u002716GB\u0027;\n  if (!ram \u0026\u0026 tl.includes(\u00278gb\u0027)) ram = \u00278GB\u0027;\n  if (!ram \u0026\u0026 tl.includes(\u002732gb\u0027)) ram = \u002732GB\u0027;\n\n  // GPU (Gráfica)\n  let gpu = \u0027\u0027;\n  const gpuM = t.match(/(RTX)\\s*(\\d{4})\\s*(Ti|S(?:uper)?)?/i) || \n               t.match(/(GTX)\\s*(\\d{4})\\s*(Ti)?/i) || \n               t.match(/(RX)\\s*(\\d{4})\\s*(\\w*)/i) ||\n               t.match(/Graphics\\s+(\\w+\\s*\\w*)/i);\n  if (gpuM) {\n    gpu = gpuM[1].toUpperCase() + (gpuM[2] ? \u0027 \u0027 + gpuM[2] : \u0027\u0027) + (gpuM[3] ? \u0027 \u0027 + gpuM[3] : \u0027\u0027);\n  }\n  if (!gpu) {\n    if (tl.includes(\u0027rtx 4060\u0027)) gpu = \u0027RTX 4060\u0027;\n    else if (tl.includes(\u0027rtx 4050\u0027)) gpu = \u0027RTX 4050\u0027;\n    else if (tl.includes(\u0027rtx 3050\u0027)) gpu = \u0027RTX 3050\u0027;\n    else if (tl.includes(\u0027iris xe\u0027)) gpu = \u0027Iris Xe\u0027;\n    else if (tl.includes(\u0027radeon\u0027)) gpu = \u0027Radeon\u0027;\n  }\n  gpu = gpu.trim();\n\n  // Disco (SSD/HDD)\n  let disk = \u0027\u0027;\n  const diskM = t.match(/(\\d+)\\s*TB\\s*SSD/i) || \n                t.match(/(\\d{3,4})\\s*GB\\s*SSD/i) || \n                t.match(/SSD\\s*(?:de\\s*)?(\\d+)\\s*(GB|TB)/i) || \n                t.match(/(\\d+)\\s*(GB|TB)\\s*(?:NVMe|PCIe|M\\.2)/i) ||\n                t.match(/[\\s/](\\d+)(GB|TB)[\\s/]/i);\n  if (diskM) {\n    const v = diskM[1]; const u = (diskM[2] || \u0027GB\u0027).toUpperCase();\n    disk = v + u;\n  }\n  if (!disk) {\n    if (tl.includes(\u0027512gb\u0027)) disk = \u0027512GB\u0027;\n    else if (tl.includes(\u00271tb\u0027)) disk = \u00271TB\u0027;\n    else if (tl.includes(\u0027256gb\u0027)) disk = \u0027256GB\u0027;\n  }\n\n  return { brand, screen, cpu, ram, gpu, disk };\n};\n\n// 8) Iconos SVG\nconst ico = {\n  globe: \u0027\u003csvg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"\u003e\u003ccircle cx=\"12\" cy=\"12\" r=\"10\"/\u003e\u003cpath d=\"M2 12h20\"/\u003e\u003cpath d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/\u003e\u003c/svg\u003e\u0027,\n  store: \u0027\u003csvg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"\u003e\u003cpath d=\"M3 9l1-5h16l1 5\"/\u003e\u003cpath d=\"M5 9v11h14V9\"/\u003e\u003cpath d=\"M9 22V13h6v9\"/\u003e\u003c/svg\u003e\u0027,\n  link: \u0027\u003csvg viewBox=\"0 0 24 24\" width=\"12\" height=\"12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"\u003e\u003cpath d=\"M7 17L17 7\"/\u003e\u003cpath d=\"M8 7h9v9\"/\u003e\u003c/svg\u003e\u0027,\n  cube: \u0027\u003csvg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"\u003e\u003cpath d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"/\u003e\u003cpolyline points=\"3.27 6.96 12 12.01 20.73 6.96\"/\u003e\u003cline x1=\"12\" y1=\"22.08\" x2=\"12\" y2=\"12\"/\u003e\u003c/svg\u003e\u0027,\n  tag: \u0027\u003csvg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"\u003e\u003cpath d=\"M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z\"/\u003e\u003cline x1=\"7\" y1=\"7\" x2=\"7.01\" y2=\"7\"/\u003e\u003c/svg\u003e\u0027,\n  trend: \u0027\u003csvg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"\u003e\u003cpolyline points=\"23 6 13.5 15.5 8.5 10.5 1 18\"/\u003e\u003cpolyline points=\"17 6 23 6 23 12\"/\u003e\u003c/svg\u003e\u0027,\n  spark: \u0027\u003csvg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"\u003e\u003cpolygon points=\"12 2 15 9 22 10 17 15 18 22 12 19 6 22 7 15 2 10 9 9 12 2\"/\u003e\u003c/svg\u003e\u0027\n};\n\n// 9) Header\nconst headerHtml = \u0027\u003cheader class=\"hdr\"\u003e\u003cdiv class=\"hdr-row\"\u003e\u003cdiv class=\"brand\"\u003e\u003cdiv class=\"brand-mark\"\u003e\u0027 + ico.cube + \u0027\u003c/div\u003e\u003cdiv class=\"brand-text\"\u003e\u003cdiv class=\"eyebrow\"\u003eINFORME COMPARATIVO DE OFERTAS\u003c/div\u003e\u003ch1\u003ePropuesta de Hardware\u003c/h1\u003e\u003c/div\u003e\u003c/div\u003e\u003cdiv class=\"hdr-meta\"\u003e\u003cdiv class=\"meta-row\"\u003e\u003cspan class=\"k\"\u003eFecha\u003c/span\u003e\u003cspan class=\"v\"\u003e\u0027 + esc(today) + \u0027\u003c/span\u003e\u003c/div\u003e\u003cdiv class=\"meta-row\"\u003e\u003cspan class=\"k\"\u003eCategoria\u003c/span\u003e\u003cspan class=\"v\"\u003e\u0027 + esc(tipo) + \u0027\u003c/span\u003e\u003c/div\u003e\u003cdiv class=\"meta-row\"\u003e\u003cspan class=\"k\"\u003ePresupuesto\u003c/span\u003e\u003cspan class=\"v\"\u003e\u0027 + fmt(pMax) + \u0027\u003c/span\u003e\u003c/div\u003e\u003cdiv class=\"meta-row\"\u003e\u003cspan class=\"k\"\u003eTerminos\u003c/span\u003e\u003cspan class=\"v\"\u003e\u0027 + esc(query) + \u0027\u003c/span\u003e\u003c/div\u003e\u003c/div\u003e\u003c/div\u003e\u003c/header\u003e\u0027;\n\nconst summaryHtml = \u0027\u003csection class=\"summary\"\u003e\u0027 +\n  \u0027\u003cdiv class=\"card stat\"\u003e\u003cdiv class=\"stat-icon\"\u003e\u0027 + ico.globe + \u0027\u003c/div\u003e\u003cdiv class=\"stat-body\"\u003e\u003cspan class=\"stat-label\"\u003eOfertas analizadas\u003c/span\u003e\u003cspan class=\"stat-value\"\u003e\u0027 + debugInfo + \u0027\u003c/span\u003e\u003c/div\u003e\u003c/div\u003e\u0027 +\n  \u0027\u003cdiv class=\"card stat\"\u003e\u003cdiv class=\"stat-icon\"\u003e\u0027 + ico.store + \u0027\u003c/div\u003e\u003cdiv class=\"stat-body\"\u003e\u003cspan class=\"stat-label\"\u003eTiendas con resultados\u003c/span\u003e\u003cspan class=\"stat-value\"\u003e\u0027 + activeStores + \u0027 / \u0027 + STORES.length + \u0027\u003c/span\u003e\u003c/div\u003e\u003c/div\u003e\u0027 +\n  \u0027\u003cdiv class=\"card stat\"\u003e\u003cdiv class=\"stat-icon\"\u003e\u0027 + ico.tag + \u0027\u003c/div\u003e\u003cdiv class=\"stat-body\"\u003e\u003cspan class=\"stat-label\"\u003eMejor precio\u003c/span\u003e\u003cspan class=\"stat-value\"\u003e\u0027 + (pool.length ? fmt(bestPrice) : \u0027—\u0027) + \u0027\u003c/span\u003e\u003c/div\u003e\u003c/div\u003e\u0027 +\n  \u0027\u003cdiv class=\"card stat\"\u003e\u003cdiv class=\"stat-icon\"\u003e\u0027 + ico.trend + \u0027\u003c/div\u003e\u003cdiv class=\"stat-body\"\u003e\u003cspan class=\"stat-label\"\u003eAhorro vs presupuesto\u003c/span\u003e\u003cspan class=\"stat-value\"\u003e\u0027 + (pool.length ? fmt(saving) : \u0027—\u0027) + \u0027\u003c/span\u003e\u003c/div\u003e\u003c/div\u003e\u0027 +\n\u0027\u003c/section\u003e\u0027;\n\n// 10) Top 3 global con specs\nconst specHeaders = \u0027\u003cth class=\"th-sm\"\u003eMarca\u003c/th\u003e\u003cth class=\"th-sm\"\u003ePant.\u003c/th\u003e\u003cth class=\"th-sm\"\u003eCPU\u003c/th\u003e\u003cth class=\"th-sm\"\u003eRAM\u003c/th\u003e\u003cth class=\"th-sm\"\u003eGPU\u003c/th\u003e\u003cth class=\"th-sm\"\u003eDisco\u003c/th\u003e\u0027;\n\nconst top3Rows = top3.length\n  ? top3.map((p, i) =\u003e {\n      const sp = parseSpecs(p.title, p.snippet);\n      const overTag = !p._inBudget ? \u0027\u003cspan class=\"tag-warn\"\u003e+presup.\u003c/span\u003e\u0027 : \u0027\u0027;\n      return \u0027\u003ctr\u003e\u0027 +\n        \u0027\u003ctd class=\"rank-cell\"\u003e\u003cspan class=\"rank rank-\u0027 + (i + 1) + \u0027\"\u003e\u0027 + (i + 1) + \u0027\u003c/span\u003e\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"spec-cell brand-cell\"\u003e\u0027 + esc(sp.brand || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"spec-cell\"\u003e\u0027 + esc(sp.screen || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"spec-cell cpu-cell\"\u003e\u0027 + esc(sp.cpu || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"spec-cell\"\u003e\u0027 + esc(sp.ram || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"spec-cell gpu-cell\"\u003e\u0027 + esc(sp.gpu || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"spec-cell\"\u003e\u0027 + esc(sp.disk || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"store-cell\"\u003e\u003cspan class=\"chip\"\u003e\u0027 + esc(p.source) + \u0027\u003c/span\u003e\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"price-cell\"\u003e\u0027 + fmt(p.price) + \u0027 \u0027 + overTag + \u0027\u003c/td\u003e\u0027 +\n        \u0027\u003ctd class=\"action-cell\"\u003e\u003ca class=\"btn-primary\" href=\"\u0027 + esc(p.link) + \u0027\" target=\"_blank\" rel=\"noopener\"\u003e\u0027 + ico.link + \u0027\u003cspan\u003eVer\u003c/span\u003e\u003c/a\u003e\u003c/td\u003e\u0027 +\n      \u0027\u003c/tr\u003e\u0027;\n    }).join(\u0027\u0027)\n  : \u0027\u003ctr\u003e\u003ctd colspan=\"10\" class=\"empty\"\u003eSin resultados validos. Revisa la peticion o el presupuesto.\u003c/td\u003e\u003c/tr\u003e\u0027;\n\nconst top3Html = \u0027\u003csection class=\"block hero\"\u003e\u0027 +\n  \u0027\u003cdiv class=\"block-hd\"\u003e\u003cdiv class=\"block-icon block-icon-primary\"\u003e\u0027 + ico.spark + \u0027\u003c/div\u003e\u003cdiv\u003e\u003ch2\u003eTop 3 - Recomendacion global\u003c/h2\u003e\u003cp class=\"sub\"\u003eLas mejores ofertas por relevancia (specs) y precio encontradas.\u003c/p\u003e\u003c/div\u003e\u003c/div\u003e\u0027 +\n  \u0027\u003ctable class=\"table table-specs\"\u003e\u0027 +\n    \u0027\u003cthead\u003e\u003ctr\u003e\u003cth class=\"th-rank\"\u003e#\u003c/th\u003e\u0027 + specHeaders + \u0027\u003cth class=\"th-sm\"\u003eTienda\u003c/th\u003e\u003cth class=\"th-price\"\u003ePrecio\u003c/th\u003e\u003cth class=\"th-act\"\u003eEnlace\u003c/th\u003e\u003c/tr\u003e\u003c/thead\u003e\u0027 +\n    \u0027\u003ctbody\u003e\u0027 + top3Rows + \u0027\u003c/tbody\u003e\u0027 +\n  \u0027\u003c/table\u003e\u0027 +\n\u0027\u003c/section\u003e\u0027;\n\n// 11) Por tienda - top 5\nconst storeBlocks = STORES.map(store =\u003e {\n  const items = byStore[store];\n  const rows = items.length\n    ? items.map((p, i) =\u003e {\n        const sp = parseSpecs(p.title, p.snippet);\n        const overTag = !p._inBudget ? \u0027\u003cspan class=\"tag-warn\"\u003e+presup.\u003c/span\u003e\u0027 : \u0027\u0027;\n        return \u0027\u003ctr\u003e\u0027 +\n          \u0027\u003ctd class=\"rank-cell\"\u003e\u003cspan class=\"rank rank-store\"\u003e\u0027 + (i + 1) + \u0027\u003c/span\u003e\u003c/td\u003e\u0027 +\n          \u0027\u003ctd class=\"spec-cell brand-cell\"\u003e\u0027 + esc(sp.brand || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n          \u0027\u003ctd class=\"spec-cell\"\u003e\u0027 + esc(sp.screen || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n          \u0027\u003ctd class=\"spec-cell cpu-cell\"\u003e\u0027 + esc(sp.cpu || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n          \u0027\u003ctd class=\"spec-cell\"\u003e\u0027 + esc(sp.ram || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n          \u0027\u003ctd class=\"spec-cell gpu-cell\"\u003e\u0027 + esc(sp.gpu || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n          \u0027\u003ctd class=\"spec-cell\"\u003e\u0027 + esc(sp.disk || \u0027-\u0027) + \u0027\u003c/td\u003e\u0027 +\n          \u0027\u003ctd class=\"price-cell\"\u003e\u0027 + fmt(p.price) + \u0027 \u0027 + overTag + \u0027\u003c/td\u003e\u0027 +\n          \u0027\u003ctd class=\"action-cell\"\u003e\u003ca class=\"btn-secondary\" href=\"\u0027 + esc(p.link) + \u0027\" target=\"_blank\" rel=\"noopener\"\u003e\u0027 + ico.link + \u0027\u003cspan\u003eAbrir\u003c/span\u003e\u003c/a\u003e\u003c/td\u003e\u0027 +\n        \u0027\u003c/tr\u003e\u0027;\n      }).join(\u0027\u0027)\n    : \u0027\u003ctr\u003e\u003ctd colspan=\"9\" class=\"empty\"\u003eSin productos directos encontrados en esta tienda.\u003c/td\u003e\u003c/tr\u003e\u0027;\n  return \u0027\u003csection class=\"block store-block\"\u003e\u0027 +\n    \u0027\u003cdiv class=\"block-hd\"\u003e\u003cdiv class=\"block-icon\"\u003e\u0027 + ico.store + \u0027\u003c/div\u003e\u003cdiv\u003e\u003ch3\u003e\u0027 + esc(store) + \u0027 \u003cspan class=\"muted\"\u003e- Top 5\u003c/span\u003e\u003c/h3\u003e\u003cp class=\"sub\"\u003e\u0027 + items.length + \u0027 producto(s) encontrado(s).\u003c/p\u003e\u003c/div\u003e\u003c/div\u003e\u0027 +\n    \u0027\u003ctable class=\"table table-specs\"\u003e\u0027 +\n      \u0027\u003cthead\u003e\u003ctr\u003e\u003cth class=\"th-rank\"\u003e#\u003c/th\u003e\u0027 + specHeaders + \u0027\u003cth class=\"th-price\"\u003ePrecio\u003c/th\u003e\u003cth class=\"th-act\"\u003eEnlace\u003c/th\u003e\u003c/tr\u003e\u003c/thead\u003e\u0027 +\n      \u0027\u003ctbody\u003e\u0027 + rows + \u0027\u003c/tbody\u003e\u0027 +\n    \u0027\u003c/table\u003e\u0027 +\n  \u0027\u003c/section\u003e\u0027;\n}).join(\u0027\u0027);\n\nconst footerHtml = \u0027\u003cfooter class=\"ftr\"\u003e\u003cdiv class=\"ftr-l\"\u003eGenerado automaticamente con n8n + Ollama (Llama 3.2) - Datos en tiempo real via Rainforest API y SerpApi.\u003c/div\u003e\u003cdiv class=\"ftr-r\"\u003e\u0027 + esc(today) + \u0027\u003c/div\u003e\u003c/footer\u003e\u0027;\n\nconst sectionTitle = \u0027\u003cdiv class=\"section-title\"\u003e\u0027 + ico.store + \u0027\u003cspan\u003eDetalle por tienda - Top 5\u003c/span\u003e\u003cspan class=\"bar\"\u003e\u003c/span\u003e\u003c/div\u003e\u0027;\n\n// 12) CSS\nconst css = \u0027:root{--bg:#f5f7fa;--surface:#fff;--surface-2:#f1f5f9;--ink:#0f172a;--ink-soft:#334155;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--accent-soft:#dbeafe;--price:#047857;--price-bg:#ecfdf5;--warn:#b45309;--warn-bg:#fef3c7;--r:10px;--r-sm:6px}\u0027\n+ \u0027*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,-apple-system,sans-serif;font-size:10px;line-height:1.4;-webkit-font-smoothing:antialiased}\u0027\n+ \u0027.page{max-width:1020px;margin:0 auto;padding:24px 28px 20px}\u0027\n+ \u0027.hdr{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 100%);color:#fff;border-radius:var(--r);padding:20px 24px;margin-bottom:16px;box-shadow:0 8px 24px -12px rgba(15,23,42,.35)}\u0027\n+ \u0027.hdr-row{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}\u0027\n+ \u0027.brand{display:flex;gap:12px;align-items:center}\u0027\n+ \u0027.brand-mark{width:40px;height:40px;border-radius:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;color:#fff}\u0027\n+ \u0027.eyebrow{font-size:8.5px;letter-spacing:2px;color:#cbd5e1;font-weight:600;text-transform:uppercase}\u0027\n+ \u0027.brand-text h1{margin:2px 0 0;font-size:19px;font-weight:700;letter-spacing:-.3px;color:#fff}\u0027\n+ \u0027.hdr-meta{min-width:260px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:var(--r-sm);padding:9px 12px}\u0027\n+ \u0027.meta-row{display:flex;justify-content:space-between;gap:16px;padding:2px 0;font-size:10px}\u0027\n+ \u0027.meta-row + .meta-row{border-top:1px solid rgba(255,255,255,.08)}\u0027\n+ \u0027.meta-row .k{color:#94a3b8;font-weight:500}.meta-row .v{color:#fff;font-weight:600}\u0027\n+ \u0027.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}\u0027\n+ \u0027.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;box-shadow:0 1px 2px rgba(15,23,42,.04)}\u0027\n+ \u0027.stat{display:flex;gap:10px;align-items:center}\u0027\n+ \u0027.stat-icon{width:32px;height:32px;flex-shrink:0;border-radius:7px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center}\u0027\n+ \u0027.stat-body{display:flex;flex-direction:column;gap:1px}\u0027\n+ \u0027.stat-label{font-size:8.5px;color:var(--muted);font-weight:600;letter-spacing:.4px;text-transform:uppercase}\u0027\n+ \u0027.stat-value{font-size:16px;color:var(--ink);font-weight:700;letter-spacing:-.3px;font-variant-numeric:tabular-nums}\u0027\n+ \u0027.block{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px 10px;margin-bottom:12px;box-shadow:0 1px 2px rgba(15,23,42,.04);page-break-inside:avoid}\u0027\n+ \u0027.block.hero{border-color:var(--accent-soft);box-shadow:0 4px 14px -8px rgba(37,99,235,.25)}\u0027\n+ \u0027.block-hd{display:flex;align-items:center;gap:10px;margin-bottom:10px}\u0027\n+ \u0027.block-icon{width:32px;height:32px;border-radius:7px;background:var(--surface-2);color:var(--ink-soft);display:flex;align-items:center;justify-content:center;border:1px solid var(--line);flex-shrink:0}\u0027\n+ \u0027.block-icon-primary{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-soft)}\u0027\n+ \u0027.block-hd h2{margin:0;font-size:13px;font-weight:700;color:var(--ink)}\u0027\n+ \u0027.block-hd h3{margin:0;font-size:12px;font-weight:700;color:var(--ink)}\u0027\n+ \u0027.block-hd .muted{color:var(--muted);font-weight:500}\u0027\n+ \u0027.sub{margin:1px 0 0;font-size:9.5px;color:var(--muted)}\u0027\n+ \u0027.section-title{display:flex;align-items:center;gap:8px;margin:18px 0 8px;padding:0 4px;color:var(--ink);font-size:11px;font-weight:700;letter-spacing:.2px;text-transform:uppercase}\u0027\n+ \u0027.section-title .bar{flex:1;height:1px;background:var(--line)}\u0027\n+ \u0027.table{width:100%;border-collapse:separate;border-spacing:0}\u0027\n+ \u0027.table-specs{font-size:9px}\u0027\n+ \u0027.table th{text-align:left;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-size:8px;padding:6px 5px;border-bottom:1px solid var(--line);background:var(--surface-2);white-space:nowrap}\u0027\n+ \u0027.table th:first-child{border-top-left-radius:var(--r-sm)}\u0027\n+ \u0027.table th:last-child{border-top-right-radius:var(--r-sm)}\u0027\n+ \u0027.table td{padding:7px 5px;border-bottom:1px solid var(--line);vertical-align:middle;color:var(--ink-soft)}\u0027\n+ \u0027.table tbody tr:last-child td{border-bottom:none}\u0027\n+ \u0027.th-rank{width:28px;text-align:center}\u0027\n+ \u0027.th-sm{}\u0027\n+ \u0027.th-price{width:90px;text-align:right}\u0027\n+ \u0027.th-act{width:68px;text-align:right}\u0027\n+ \u0027.rank-cell{text-align:center}\u0027\n+ \u0027.rank{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-weight:700;font-size:9px;color:#fff;background:var(--ink-soft)}\u0027\n+ \u0027.rank-1{background:#0f172a}.rank-2{background:#334155}.rank-3{background:#64748b}\u0027\n+ \u0027.rank-store{background:var(--accent);color:#fff}\u0027\n+ \u0027.spec-cell{font-size:9px;color:var(--ink);white-space:nowrap}\u0027\n+ \u0027.brand-cell{font-weight:600}\u0027\n+ \u0027.cpu-cell,.gpu-cell{font-family:Consolas,Monaco,monospace;font-size:8.5px;color:var(--ink-soft)}\u0027\n+ \u0027.price-cell{text-align:right;font-weight:700;color:var(--price);background:var(--price-bg);font-variant-numeric:tabular-nums;white-space:nowrap}\u0027\n+ \u0027.action-cell{text-align:right}\u0027\n+ \u0027.store-cell{}\u0027\n+ \u0027.chip{display:inline-block;padding:2px 7px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);font-size:8.5px;font-weight:600;color:var(--ink-soft)}\u0027\n+ \u0027.tag-warn{display:inline-block;padding:1px 5px;border-radius:99px;background:var(--warn-bg);color:var(--warn);font-size:7.5px;font-weight:700;margin-left:4px;vertical-align:middle}\u0027\n+ \u0027.btn-primary,.btn-secondary{display:inline-flex;align-items:center;gap:4px;text-decoration:none;font-weight:600;font-size:8.5px;padding:4px 8px;border-radius:var(--r-sm);white-space:nowrap}\u0027\n+ \u0027.btn-primary{background:var(--accent);color:#fff;border:1px solid var(--accent)}\u0027\n+ \u0027.btn-secondary{background:#fff;color:var(--accent);border:1px solid #c7dafd}\u0027\n+ \u0027.empty{text-align:center;color:var(--muted);font-style:italic;padding:14px}\u0027\n+ \u0027.ftr{display:flex;justify-content:space-between;font-size:8.5px;color:var(--muted);margin-top:14px;padding-top:10px;border-top:1px solid var(--line);gap:20px}\u0027\n+ \u0027@page{size:A4 landscape;margin:10mm}\u0027\n+ \u0027@media print{.block,.summary,.hdr{break-inside:avoid}}\u0027;\n\nconst html = \u0027\u003c!DOCTYPE html\u003e\u003chtml lang=\"es\"\u003e\u003chead\u003e\u003cmeta charset=\"utf-8\"\u003e\u0027 +\n  \u0027\u003ctitle\u003ePropuesta de Hardware - \u0027 + esc(tipo) + \u0027\u003c/title\u003e\u0027 +\n  \u0027\u003cstyle\u003e\u0027 + css + \u0027\u003c/style\u003e\u0027 +\n\u0027\u003c/head\u003e\u003cbody\u003e\u003cdiv class=\"page\"\u003e\u0027 +\n  headerHtml + summaryHtml + top3Html + sectionTitle + storeBlocks + footerHtml +\n\u0027\u003c/div\u003e\u003c/body\u003e\u003c/html\u003e\u0027;\n\nreturn [{\n  json: {\n    total: pool.length,\n    totalRaw: allProducts.length,\n    top3: top3.length,\n    stores: STORES.map(s =\u003e ({ name: s, count: byStore[s].length })),\n    presupuesto: pMax,\n    precioMinimo: pMin,\n    tipo, query, must, nice\n  },\n  binary: {\n    index: {\n      data: Buffer.from(html, \u0027utf-8\u0027).toString(\u0027base64\u0027),\n      mimeType: \u0027text/html\u0027,\n      fileName: \u0027index.html\u0027\n    }\n  }\n}];\n"
-                                     },
-                      "name":  "Procesar y Generar HTML",
-                      "type":  "n8n-nodes-base.code",
-                      "typeVersion":  2,
-                      "position":  [
-                                       1300,
-                                       370
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "method":  "POST",
-                                         "url":  "http://gotenberg:3000/forms/chromium/convert/html",
-                                         "sendBody":  true,
-                                         "contentType":  "multipart-form-data",
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "name":  "files",
-                                                                                       "parameterType":  "formBinaryData",
-                                                                                       "inputDataFieldName":  "index"
-                                                                                   }
-                                                                               ]
-                                                            },
-                                         "options":  {
-                                                         "response":  {
-                                                                          "response":  {
-                                                                                           "responseFormat":  "file",
-                                                                                           "outputPropertyName":  "data"
-                                                                                       }
-                                                                      },
-                                                         "timeout":  60000
-                                                     }
-                                     },
-                      "name":  "Convertir a PDF (Gotenberg)",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "typeVersion":  4,
-                      "position":  [
-                                       1520,
-                                       370
-                                   ]
-                  },
-                  {
-                      "parameters":  {
-                                         "operation":  "write",
-                                         "fileName":  "=/n8n-watch/busqueda_ofertas_equipos/propuestas_generadas/ofertas_{{ $(\u0027Preparar Busqueda\u0027).first().json.tipo.toLowerCase().replace(/[^a-z0-9]/g,\u0027_\u0027) }}_{{$now.toFormat(\u0027yyyyMMdd_HHmmss\u0027)}}.pdf",
-                                         "dataPropertyName":  "data",
-                                         "options":  {
-
-                                                     }
-                                     },
-                      "name":  "Guardar PDF",
-                      "type":  "n8n-nodes-base.readWriteFile",
-                      "typeVersion":  1,
-                      "position":  [
-                                       1720,
-                                       370
-                                   ]
-                  }
-              ],
-    "connections":  {
-                        "Local File Trigger":  {
-                                                   "main":  [
-                                                                [
-                                                                    {
-                                                                        "node":  "Read Text File",
-                                                                        "type":  "main",
-                                                                        "index":  0
-                                                                    }
-                                                                ]
-                                                            ]
-                                               },
-                        "Read Text File":  {
-                                               "main":  [
-                                                            [
-                                                                {
-                                                                    "node":  "Ollama Extract",
-                                                                    "type":  "main",
-                                                                    "index":  0
-                                                                }
-                                                            ]
-                                                        ]
-                                           },
-                        "Ollama Extract":  {
-                                               "main":  [
-                                                            [
-                                                                {
-                                                                    "node":  "Preparar Busqueda",
-                                                                    "type":  "main",
-                                                                    "index":  0
-                                                                }
-                                                            ]
-                                                        ]
-                                           },
-                        "Preparar Busqueda":  {
-                                                  "main":  [
-                                                               [
-                                                                   {
-                                                                       "node":  "Amazon",
-                                                                       "type":  "main",
-                                                                       "index":  0
-                                                                   },
-                                                                   {
-                                                                       "node":  "PcComponentes",
-                                                                       "type":  "main",
-                                                                       "index":  0
-                                                                   },
-                                                                   {
-                                                                       "node":  "Coolmod",
-                                                                       "type":  "main",
-                                                                       "index":  0
-                                                                   },
-                                                                   {
-                                                                       "node":  "MediaMarkt",
-                                                                       "type":  "main",
-                                                                       "index":  0
-                                                                   }
-                                                               ]
-                                                           ]
-                                              },
-                        "Amazon":  {
-                                       "main":  [
-                                                    [
-                                                        {
-                                                            "node":  "Norm Amazon",
-                                                            "type":  "main",
-                                                            "index":  0
-                                                        }
-                                                    ]
-                                                ]
-                                   },
-                        "PcComponentes":  {
-                                              "main":  [
-                                                           [
-                                                               {
-                                                                   "node":  "Norm PcComponentes",
-                                                                   "type":  "main",
-                                                                   "index":  0
-                                                               }
-                                                           ]
-                                                       ]
-                                          },
-                        "Coolmod":  {
-                                        "main":  [
-                                                     [
-                                                         {
-                                                             "node":  "Norm Coolmod",
-                                                             "type":  "main",
-                                                             "index":  0
-                                                         }
-                                                     ]
-                                                 ]
-                                    },
-                        "MediaMarkt":  {
-                                           "main":  [
-                                                        [
-                                                            {
-                                                                "node":  "Norm MediaMarkt",
-                                                                "type":  "main",
-                                                                "index":  0
-                                                            }
-                                                        ]
-                                                    ]
-                                       },
-                        "Norm Amazon":  {
-                                            "main":  [
-                                                         [
-                                                             {
-                                                                 "node":  "Merge AM-PC",
-                                                                 "type":  "main",
-                                                                 "index":  0
-                                                             }
-                                                         ]
-                                                     ]
-                                        },
-                        "Norm PcComponentes":  {
-                                                   "main":  [
-                                                                [
-                                                                    {
-                                                                        "node":  "Merge AM-PC",
-                                                                        "type":  "main",
-                                                                        "index":  1
-                                                                    }
-                                                                ]
-                                                            ]
-                                               },
-                        "Norm Coolmod":  {
-                                             "main":  [
-                                                          [
-                                                              {
-                                                                  "node":  "Merge CM-MM",
-                                                                  "type":  "main",
-                                                                  "index":  0
-                                                              }
-                                                          ]
-                                                      ]
-                                         },
-                        "Norm MediaMarkt":  {
-                                                "main":  [
-                                                             [
-                                                                 {
-                                                                     "node":  "Merge CM-MM",
-                                                                     "type":  "main",
-                                                                     "index":  1
-                                                                 }
-                                                             ]
-                                                         ]
-                                            },
-                        "Merge AM-PC":  {
-                                            "main":  [
-                                                         [
-                                                             {
-                                                                 "node":  "Unificar Resultados",
-                                                                 "type":  "main",
-                                                                 "index":  0
-                                                             }
-                                                         ]
-                                                     ]
-                                        },
-                        "Merge CM-MM":  {
-                                            "main":  [
-                                                         [
-                                                             {
-                                                                 "node":  "Unificar Resultados",
-                                                                 "type":  "main",
-                                                                 "index":  1
-                                                             }
-                                                         ]
-                                                     ]
-                                        },
-                        "Unificar Resultados":  {
-                                                    "main":  [
-                                                                 [
-                                                                     {
-                                                                         "node":  "Procesar y Generar HTML",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
-                                                                 ]
-                                                             ]
-                                                },
-                        "Procesar y Generar HTML":  {
-                                                        "main":  [
-                                                                     [
-                                                                         {
-                                                                             "node":  "Convertir a PDF (Gotenberg)",
-                                                                             "type":  "main",
-                                                                             "index":  0
-                                                                         }
-                                                                     ]
-                                                                 ]
-                                                    },
-                        "Convertir a PDF (Gotenberg)":  {
-                                                            "main":  [
-                                                                         [
-                                                                             {
-                                                                                 "node":  "Guardar PDF",
-                                                                                 "type":  "main",
-                                                                                 "index":  0
-                                                                             }
-                                                                         ]
-                                                                     ]
-                                                        }
-                    },
-    "settings":  {
-                     "executionOrder":  "v1"
-                 },
-    "active":  false,
-    "pinData":  {
-
-                },
-    "tags":  [
-
-             ]
+{
+  "name": "Buscador de Ofertas AI Agent Pro (Loop & Quality)",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerOn": "folder",
+        "path": "/n8n-watch/busqueda_ofertas_equipos/peticiones_oferta",
+        "events": ["add"],
+        "options": { "awaitWriteFinish": true, "usePolling": true }
+      },
+      "name": "Local File Trigger",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [-1000, 300],
+      "id": "2b03acad-fb52-4637-b4d2-14b34fa154a5"
+    },
+    {
+      "parameters": { "command": "=cat \"{{$json.path}}\"" },
+      "name": "Read Text File",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [-800, 300],
+      "id": "ad513cf6-6f59-4787-9875-6ad3d96bebcb"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.5.152:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "qwen2.5:14b" },
+            {
+              "name": "prompt",
+              "value": "=Analiza esta peticion: '{{$json.stdout}}'. Extrae un JSON con: 'keywords' (3-4 palabras clave), 'presupuesto' (int), 'tipo' (Portatil/Sobremesa), 'pMin' (30% del presupuesto). Responde SOLO el JSON."
+            },
+            { "name": "stream", "value": false },
+            { "name": "format", "value": "json" }
+          ]
+        }
+      },
+      "name": "Ollama Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [-600, 300],
+      "id": "a8b6cf5d-2299-4a0c-a064-5b705be46c08"
+    },
+    {
+      "parameters": {
+        "jsCode": "let res;\ntry {\n  res = JSON.parse($input.item.json.response);\n} catch (e) {\n  res = { keywords: 'PC Desktop', presupuesto: 1000, tipo: 'Sobremesa', pMin: 300 };\n}\nreturn { json: { q: res.keywords, pMax: res.presupuesto, pMin: res.pMin || 150, tipo: res.tipo, retryCount: 0 } };"
+      },
+      "name": "Preparar Busqueda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [-400, 300],
+      "id": "6b265c1e-1d07-4d8e-a68b-a54f94d6f0f9"
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?q={{$json.q}}+site:pccomponentes.com&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "name": "PcComponentes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [0, 0],
+      "id": "d90de13f-bfb0-4cd9-abf1-c03837d448f8"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.rainforestapi.com/request?api_key=8531EA9640A248D0B0C517E23131F9A5&type=search&amazon_domain=amazon.es&search_term={{$json.q}}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "name": "Amazon",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [0, 200],
+      "id": "72f5d2cf-c907-4242-8b35-d021b8e80a0b"
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?q={{$json.q}}+site:coolmod.com&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "name": "Coolmod",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [0, 400],
+      "id": "87b1b1c6-9279-406d-a6eb-c3dc6f2693eb"
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?q={{$json.q}}+site:mediamarkt.es&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "name": "MediaMarkt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [0, 600],
+      "id": "b8cf937a-a018-437a-bbb2-c81f7cc149f9"
+    },
+    {
+      "parameters": { "mode": "combine", "combinationMode": "mergeByPosition" },
+      "name": "Merge Final",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "id": "50951c10-39bb-4fcf-8299-be72629b869c"
+    },
+    {
+      "parameters": {
+        "jsCode": "let all = [];\nconst pCfg = $('Preparar Busqueda').first().json;\nconst pMin = pCfg.pMin;\nconst pMax = pCfg.pMax;\n\n$input.all().forEach(item => {\n  const d = item.json;\n  if (d.organic_results) {\n    d.organic_results.forEach(r => {\n      const pMatch = (r.rich_snippet?.top?.detected_extensions?.price) || \n                     (r.snippet?.match(/(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{2})?)\\s?€/)?.[1]);\n      let price = pMatch ? parseFloat(String(pMatch).replace('.', '').replace(',', '.')) : 0;\n      if (price >= pMin && price <= pMax) {\n        all.push({ title: r.title, price, link: r.link, source: r.link.includes('pccomponentes') ? 'PcComponentes' : (r.link.includes('coolmod') ? 'Coolmod' : 'MediaMarkt'), snippet: r.snippet || '' });\n      }\n    });\n  }\n  if (d.search_results) {\n    d.search_results.forEach(r => {\n      const price = r.price?.value || 0;\n      if (price >= pMin && price <= pMax) {\n        all.push({ title: r.title, price, link: r.link, source: 'Amazon', snippet: '' });\n      }\n    });\n  }\n});\nreturn all.sort((a,b) => a.price - b.price).slice(0,12).map(p => ({ json: p }));"
+      },
+      "name": "Filtrar y Preparar Agente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [500, 300],
+      "id": "39f58b29-5c56-48e0-8c6f-53a1b0c0d761"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "=Eres un Ingeniero de Compras de Hardware. Analiza los productos y extrae: MARCA, MODELO, CPU, RAM, GPU, DISCO, SO. DESCARTA accesorios. Si falta un dato, deducelo. Responde JSON."
+        }
+      },
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [700, 300],
+      "id": "17208d1a-a852-465f-b38c-b7d1b4cf6a77"
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:14b",
+        "options": { "temperature": 0.1 }
+      },
+      "credentials": {
+        "ollamaApi": { "id": "pg9O0Dpxjc3upDzI" }
+      },
+      "name": "Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [600, 550],
+      "id": "ca68c699-28d6-4189-9434-41227079b34e"
+    },
+    {
+      "parameters": {
+        "contextWindowLength": 5,
+        "sessionId": "={{ $node[\"Read Text File\"].json.path }}"
+      },
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [800, 550],
+      "id": "3d1f2141-473f-4eb0-8319-575d0d366746"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{$input.all().length}}", "operation": "larger", "value2": 2 }]
+        }
+      },
+      "name": "Validar Calidad",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [950, 300],
+      "id": "7ba405b5-082e-4cbd-bbe9-f4aa0a3cac61"
+    },
+    {
+      "parameters": {
+        "jsCode": "const products = $input.all().map(i => {\n  let p = i.json.output ? JSON.parse(i.json.output.replace(/```json|```/g, '')) : i.json;\n  return Array.isArray(p) ? p[0] : p;\n});\nconst pCfg = $('Preparar Busqueda').first().json;\nlet html = `<html><head><style>body{font-family:'Inter',sans-serif;padding:40px;background:#f1f5f9;color:#1e293b}.header{background:#0f172a;color:#fff;padding:25px;border-radius:12px 12px 0 0}table{width:100%;border-collapse:collapse;background:#fff}th{background:#f8fafc;padding:12px;text-align:left;border-bottom:2px solid #e2e8f0}td{padding:12px;border-bottom:1px solid #f1f5f9}.price{color:#059669;font-weight:700}.btn{padding:6px 12px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px}</style></head><body><div class=\"header\"><h1>Propuesta Hardware</h1><div>Presupuesto: ${pCfg.pMax}€</div></div><table><thead><tr><th>Marca/Modelo</th><th>Specs</th><th>Precio</th><th>Link</th></tr></thead><tbody>`;\nproducts.forEach(p => {\n  html += `<tr><td><b>${p.MARCA}</b><br>${p.MODELO}</td><td>${p.CPU} | ${p.RAM} | ${p.GPU} | ${p.DISCO}</td><td class=\"price\">${p.price}€</td><td><a class=\"btn\" href=\"${p.link}\">Ver</a></td></tr>`;\n});\nhtml += `</tbody></table></body></html>`;\nreturn [{ binary: { index: { data: Buffer.from(html).toString('base64'), mimeType: 'text/html', fileName: 'index.html' } } }];"
+      },
+      "name": "Generar HTML PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1200, 200],
+      "id": "8558181a-e90a-4ee8-bfb5-d638b3980558"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gotenberg:3000/forms/chromium/convert/html",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [{ "name": "files", "parameterType": "formBinaryData", "inputDataFieldName": "index" }]
+        }
+      },
+      "name": "Gotenberg PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1400, 200],
+      "id": "60746efd-f2ec-46ee-95aa-8f31e26445f3"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/n8n-watch/busqueda_ofertas_equipos/propuestas_generadas/informe_{{$now.toFormat('yyyyMMdd_HHmmss')}}.pdf"
+      },
+      "name": "Guardar PDF",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1600, 200],
+      "id": "3bbce164-33c9-421d-9d55-df7fa02c88b5"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: { q: $('Preparar Busqueda').first().json.q + ' oferta', retry: true } };"
+      },
+      "name": "Reformular Busqueda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1200, 450],
+      "id": "e29462bf-6133-492b-bbd5-6295357b847a"
+    }
+  ],
+  "connections": {
+    "Local File Trigger": { "main": [[{ "node": "Read Text File", "type": "main", "index": 0 }]] },
+    "Read Text File": { "main": [[{ "node": "Ollama Extract", "type": "main", "index": 0 }]] },
+    "Ollama Extract": { "main": [[{ "node": "Preparar Busqueda", "type": "main", "index": 0 }]] },
+    "Preparar Busqueda": { "main": [[{ "node": "PcComponentes", "type": "main", "index": 0 }, { "node": "Amazon", "type": "main", "index": 0 }, { "node": "Coolmod", "type": "main", "index": 0 }, { "node": "MediaMarkt", "type": "main", "index": 0 }]] },
+    "PcComponentes": { "main": [[{ "node": "Merge Final", "type": "main", "index": 0 }]] },
+    "Amazon": { "main": [[{ "node": "Merge Final", "type": "main", "index": 1 }]] },
+    "Coolmod": { "main": [[{ "node": "Merge Final", "type": "main", "index": 2 }]] },
+    "MediaMarkt": { "main": [[{ "node": "Merge Final", "type": "main", "index": 3 }]] },
+    "Merge Final": { "main": [[{ "node": "Filtrar y Preparar Agente", "type": "main", "index": 0 }]] },
+    "Filtrar y Preparar Agente": { "main": [[{ "node": "AI Agent", "type": "main", "index": 0 }]] },
+    "Ollama Chat Model": { "ai_languageModel": [[{ "node": "AI Agent", "type": "ai_languageModel", "index": 0 }]] },
+    "Simple Memory": { "ai_memory": [[{ "node": "AI Agent", "type": "ai_memory", "index": 0 }]] },
+    "AI Agent": { "main": [[{ "node": "Validar Calidad", "type": "main", "index": 0 }]] },
+    "Validar Calidad": { "main": [[{ "node": "Generar HTML PDF", "type": "main", "index": 0 }], [{ "node": "Reformular Busqueda", "type": "main", "index": 0 }]] },
+    "Reformular Busqueda": { "main": [[{ "node": "PcComponentes", "type": "main", "index": 0 }, { "node": "Amazon", "type": "main", "index": 0 }, { "node": "Coolmod", "type": "main", "index": 0 }, { "node": "MediaMarkt", "type": "main", "index": 0 }]] },
+    "Generar HTML PDF": { "main": [[{ "node": "Gotenberg PDF", "type": "main", "index": 0 }]] },
+    "Gotenberg PDF": { "main": [[{ "node": "Guardar PDF", "type": "main", "index": 0 }]] }
+  }
 }
