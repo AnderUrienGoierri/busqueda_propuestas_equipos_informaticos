@@ -1,0 +1,54 @@
+A través de nuestra herramienta Amara LowCode podéis generar un catálogo para vuestro sistema. Para acceder, debéis hacer uso de las mismas credenciales de acceso que en la web de DMI. Esta herramienta os permite seleccionar campos, filtrar por categorías y fabricantes entre otros, y generarlo en distintos formatos tales como CSV y JSON.
+
+A la hora de obtenerlo, podéis descargarlo a través de una URL, recibirlo por correo o enviarlo directamente a vuestro servidor, en caso de contar con uno.
+
+Os facilito la URL para que podáis echarle un vistazo a Amara LowCode y así generar vuestro propio catálogo si lo necesitáis: https://build.amara.shopping/
+
+ 
+
+A continuación, os explico brevemente como funcionaría la integración a través de la API:
+
+ 
+
+Para obtener la API key, debéis hacer uso del endpoint de autenticación (Authenticate).
+Necesitaréis el token recibido en Authenticate para poder utilizar el resto de endpoints.
+
+Para realizar la primera petición, tendréis que usar las credenciales (usuario y contraseña) con las que iniciáis sesión a través de la web de DMI dentro del body. Una vez obtenida la respuesta por primera vez, recibiréis el token y vuestra API key para las siguientes peticiones.
+
+ 
+
+Los endpoints para descargar la información de los productos se encuentran en Products.
+Para obtener el stock y el precio de los productos y poder actualizarlos en el catálogo, podéis utilizar el endpoint Stock & Price o de forma individual los endpoints de GetStock y GetPrice.
+Para realizar un pedido, podéis utilizar el endpoint Create Order.
+Para visualizar su estado y hacer seguimiento, podéis utilizar el endpoint QueryOrdersStatus.
+Para revisar las facturas y abonos, podéis utilizar los endpoints QueryInvoice (facturas) y QueryCreditMemos (abonos).
+
+ 
+
+Debéis tener en cuenta que existen restricciones de peticiones para los endpoints más pesados, como GetAllProducts o CustomCatalog, por lo que es recomendable contar con una política de reintentos si no recibís un 200 con una respuesta válida en la primera petición.
+
+ 
+
+Podéis encontrar los endpoints en la siguiente URL: https://api.dmi.es/swagger/index.html?urls.primaryName=V2
+
+ 
+
+Si queréis realizar pruebas, podéis utilizar la URL https://api.dmi.es/swagger/V2/docs.json copiando y pegando el contenido directamente en un programa como Postman, para ver la estructura y los datos requeridos para poder realizar test.
+
+ 
+
+No contamos con un entorno de pruebas para la integración. Todo iría contra producción, pero contamos con campos en los endpoints de pedidos que os permiten realizar pruebas sin problemas para evitar que se procesen los pedidos.
+
+ 
+
+No habría problema con ese volumen de peticiones por día, podríais realizarlo correctamente.
+
+En vuestro caso concreto, haríais uso de un catálogo para obtener datos de productos y del endpoint Stock & Price para actualizar esta información. Posteriormente, en caso de realizar pedidos, usaríais el endpoint CreateOrder.
+
+ 
+
+Actualmente nos encontramos en un proceso de migración de ERP, que entiendo, es lo que os informaron a través de whatssap, por lo tanto, algunas funcionalidades no están devolviendo los datos correctamente hasta que se finalice este proceso, como la revisión de facturas y abonos, o el seguimiento de pedidos a través de endpoints.
+
+ 
+
+Estamos intentando dar prioridad a esta sincronización de datos para poder volver a dar servicio correctamente.

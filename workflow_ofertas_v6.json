@@ -12,7 +12,7 @@
       ],
       "parameters": {
         "triggerOn": "folder",
-        "path": "/n8n-watch/busqueda_ofertas_equipos/peticiones_oferta",
+        "path": "C:\\Ander\\Workspace\\n8n\\busqueda_propuestas_equipos_informaticos\\peticiones_oferta",
         "events": [
           "add"
         ],
@@ -25,14 +25,15 @@
     {
       "id": "v5n02",
       "name": "Read Text File",
-      "type": "n8n-nodes-base.executeCommand",
+      "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
         -1200,
         300
       ],
       "parameters": {
-        "command": "=cat \"{{$json.path}}\""
+        "fileSelector": "={{$json.path}}",
+        "options": {}
       }
     },
     {
@@ -47,17 +48,17 @@
       "continueOnFail": true,
       "parameters": {
         "method": "POST",
-        "url": "http://192.168.5.152:11434/api/generate",
+        "url": "http://127.0.0.1:11434/api/generate",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
             {
               "name": "model",
-              "value": "qwen2.5:14b"
+              "value": "qwen2.5:7b"
             },
             {
               "name": "prompt",
-              "value": "=Eres un sistema experto en análisis de peticiones de compra de hardware informático para España.\n\nPETICIÓN DEL USUARIO: '{{$json.stdout}}'\n\nTAREA: Analiza la petición y devuelve EXACTAMENTE este JSON (sin texto adicional, sin markdown):\n\n{\n  \"keywords\": [\"término1\", \"término2\", \"término3\"],\n  \"presupuesto\": 1000,\n  \"tipo\": \"Portatil\",\n  \"pMin\": 650,\n  \"pantalla\": null,\n  \"must\": [\"característica1\", \"característica2\"],\n  \"nice\": [\"deseable1\", \"deseable2\"],\n  \"marcas\": []\n}\n\nREGLAS:\n- \"keywords\": 3-5 términos técnicos específicos para buscar en Google (ej: [\"portátil gaming\", \"RTX 4060\", \"16GB\"])\n- \"presupuesto\": precio MÁXIMO en euros (entero)\n- \"tipo\": SOLO \"Portatil\" o \"Sobremesa\"\n- \"pMin\": 65% del presupuesto (precio mínimo aceptable para calidad)\n- \"pantalla\": pulgadas si se menciona (ej: \"15.6\"), null si no\n- \"must\": 2-3 características OBLIGATORIAS mencionadas por el usuario\n- \"nice\": 2-3 características DESEABLES no obligatorias\n- \"marcas\": marcas preferidas si el usuario las menciona, [] si no especifica\n- Si el usuario no menciona tipo, dedúcelo del contexto\n- Responde SOLO el JSON"
+              "value": "=Eres un sistema experto en análisis de peticiones de compra de hardware informático para España.\n\nPETICIÓN DEL USUARIO: '{{ $binary.data.data.toString() }}'\n\nTAREA: Analiza la petición y devuelve EXACTAMENTE este JSON (sin texto adicional, sin markdown):\n\n{\n  \"keywords\": [\"término1\", \"término2\", \"término3\"],\n  \"presupuesto\": 1000,\n  \"tipo\": \"Portatil\",\n  \"pMin\": 650,\n  \"pantalla\": null,\n  \"must\": [\"característica1\", \"característica2\"],\n  \"nice\": [\"deseable1\", \"deseable2\"],\n  \"marcas\": []\n}\n\nREGLAS:\n- \"keywords\": 3-5 términos técnicos específicos para buscar en Google (ej: [\"portátil gaming\", \"RTX 4060\", \"16GB\"])\n- \"presupuesto\": precio MÁXIMO en euros (entero)\n- \"tipo\": SOLO \"Portatil\" o \"Sobremesa\"\n- \"pMin\": 65% del presupuesto (precio mínimo aceptable para calidad)\n- \"pantalla\": pulgadas si se menciona (ej: \"15.6\"), null si no\n- \"must\": 2-3 características OBLIGATORIAS mencionadas por el usuario\n- \"nice\": 2-3 características DESEABLES no obligatorias\n- \"marcas\": marcas preferidas si el usuario las menciona, [] si no especifica\n- Si el usuario no menciona tipo, dedúcelo del contexto\n- Responde SOLO el JSON"
             },
             {
               "name": "stream",
@@ -140,8 +141,20 @@
       ],
       "continueOnFail": true,
       "parameters": {
-        "url": "=https://serpapi.com/search.json?q={{$json.q}}+site:dmi.es&num=25&gl=es&hl=es&api_key=52fcdd105cf07cc0a4d0f69bde6ce978fdcbd4deb98db0667866f6a21be74594",
-        "options": {}
+        "method": "POST",
+        "url": "https://api.dmi.es/api/v2/products/CustomCatalog",
+        "authentication": "headerAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$node[\"DMI Auth\"].json.token}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n    \"FileFormat\": \"json\",\n    \"Columns\": [\"PriceOnly\", \"Manufacturer\", \"Name\", \"Url\", \"Stock\", \"ManufacturerCode\", \"ShortDescription\"],\n    \"ColumnNames\": {\n        \"PriceOnly\": \"COMPRA\",\n        \"Manufacturer\": \"MARCA\",\n        \"Name\": \"DENOMINA\",\n        \"Url\": \"URL\",\n        \"Stock\": \"STOCK\",\n        \"ManufacturerCode\": \"PARTNUMBER\",\n        \"ShortDescription\": \"SHORTDESC\"\n    },\n    \"ReturnFileDirectly\": true,\n    \"Page\": 1,\n    \"PageSize\": 20,\n    \"Filters\": [\n        { \"ColumnName\": \"Name\", \"Value\": \"{{ $node['Parsear Peticion'].json.q.split(' ').slice(0,2).join(' ') }}\", \"Operator\": \"Contains\" }\n    ],\n    \"IncludeObsoleteProducts\": false,\n    \"Currency\": \"EUR\"\n}"
       }
     },
     {
@@ -167,7 +180,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "// ===========================================================\n// NORM AMAZON - Solo paginas de producto + score de relevancia\n// ===========================================================\n// Acepta SOLO URLs con /dp/ASIN o /gp/product/ASIN (siempre directas).\n// Devuelve TODOS los productos validos con score de relevancia.\n// El nodo HTML decide el top 5 segun score+precio.\n\nconst STORE = 'Amazon';\nconst data = $input.item.json || {};\nconst products = [];\n\n// Parametros del usuario para scoring\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\n\nconst noAccent = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n\nconst parseAmazonPrice = (p) => {\n  if (!p) return 0;\n  if (typeof p.value === 'number' && p.value > 0) return p.value;\n  if (p.raw) {\n    let n = String(p.raw).replace(/ /g, ' ').trim().replace(/[^0-9.,]/g, '');\n    if (n.includes('.') && n.includes(',')) n = n.replace(/\\./g, '').replace(',', '.');\n    else if (n.includes(',')) n = n.replace(',', '.');\n    const v = parseFloat(n);\n    return isFinite(v) ? v : 0;\n  }\n  return 0;\n};\n\n// SOLO paginas de producto reales de Amazon\nconst isAmazonProduct = (url) => {\n  if (!url) return false;\n  const u = String(url).toLowerCase();\n  return /\\/dp\\/[A-Z0-9]{8,12}/i.test(url) || /\\/gp\\/product\\/[A-Z0-9]{8,12}/i.test(url);\n};\n\n// Limpia URL de tracking pero mantiene /dp/<ASIN> para que abra el producto\nconst cleanAmazonUrl = (url) => {\n  try {\n    const m = url.match(/(\\/(?:dp|gp\\/product)\\/[A-Z0-9]{8,12})/i);\n    if (m) return 'https://www.amazon.es' + m[1];\n    return url.split('?')[0];\n  } catch (e) { return url; }\n};\n\nconst isJunkTitle = (title) => {\n  if (!title || title.length < 12) return true;\n  const t = noAccent(title);\n  return ['resultados de', 'ofertas en', 'comprar online', 'amazon basics pack'].some(w => t.includes(w));\n};\n\n// Score: must=10, nice=3\nconst scoreProduct = (title, snippet) => {\n  const text = noAccent(String(title) + ' ' + String(snippet || ''));\n  let score = 0;\n  must.forEach(m => { if (m && text.includes(noAccent(m))) score += 10; });\n  nice.forEach(n => { if (n && text.includes(noAccent(n))) score += 3; });\n  return score;\n};\n\nif (Array.isArray(data.search_results)) {\n  data.search_results.forEach(r => {\n    if (!r || !r.title || !r.link) return;\n    if (!isAmazonProduct(r.link)) return;\n    if (isJunkTitle(r.title)) return;\n    if (r.is_sponsored && (!r.price || !r.price.value)) return;\n\n    const price = parseAmazonPrice(r.price) || parseAmazonPrice(r.price_upper);\n    if (price <= 0) return;\n\n    const link = cleanAmazonUrl(r.link);\n    const snippet = (r.bullet_points && Array.isArray(r.bullet_points) ? r.bullet_points.join(' ') : '')\n                  + ' ' + (r.snippet || '');\n\n    products.push({\n      source: STORE,\n      title: String(r.title).trim(),\n      price,\n      link,\n      snippet,\n      score: scoreProduct(r.title, snippet),\n      image: r.image || ''\n    });\n  });\n}\n\n// Ordenar por relevancia DESC, luego precio ASC\nproducts.sort((a, b) => (b.score - a.score) || (a.price - b.price));\n\nreturn [{ json: { source: STORE, products } }];\n"
+        "jsCode": "// ===========================================================\n// NORM AMAZON - Solo paginas de producto + score de relevancia\n// ===========================================================\n// Acepta SOLO URLs con /dp/ASIN o /gp/product/ASIN (siempre directas).\n// Devuelve TODOS los productos validos con score de relevancia.\n// El nodo HTML decide el top 5 segun score+precio.\n\nconst STORE = 'Amazon';\nconst data = $input.item.json || {};\nconst products = [];\n\n// Parametros del usuario para scoring\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\n\nconst noAccent = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n\nconst parseAmazonPrice = (p) => {\n  if (!p) return 0;\n  if (typeof p.value === 'number' && p.value > 0) return p.value;\n  if (p.raw) {\n    let n = String(p.raw).replace(/ /g, ' ').trim().replace(/[^0-9.,]/g, '');\n    if (n.includes('.') && n.includes(',')) n = n.replace(/\\./g, '').replace(',', '.');\n    else if (n.includes(',')) n = n.replace(',', '.');\n    const v = parseFloat(n);\n    return isFinite(v) ? v : 0;\n  }\n  return 0;\n};\n\n// SOLO paginas de producto reales de Amazon\nconst isAmazonProduct = (url) => {\n  if (!url) return false;\n  const u = String(url).toLowerCase();\n  return /\\/dp\\/[A-Z0-9]{8,12}/i.test(url) || /\\/gp\\/product\\/[A-Z0-9]{8,12}/i.test(url);\n};\n\n// Limpia URL de tracking pero mantiene /dp/<ASIN> para que abra el producto\nconst cleanAmazonUrl = (url) => {\n  try {\n    const m = url.match(/(\\/(?:dp|gp\\/product)\\/[A-Z0-9]{8,12})/i);\n    if (m) return 'https://www.amazon.es' + m[1];\n    return url.split('?')[0];\n  } catch (e) { return url; }\n};\n\nconst isJunkTitle = (title) => {\n  if (!title || title.length < 12) return true;\n  const t = noAccent(title);\n  return ['resultados de', 'ofertas en', 'comprar online', 'amazon basics pack'].some(w => t.includes(w));\n};\n\n// Score: must=10, nice=3\nconst scoreProduct = (title, snippet) => {\n  const text = noAccent(String(title) + ' ' + String(snippet || ''));\n  let score = 0;\n  must.forEach(m => { if (m && text.includes(noAccent(m))) score += 10; });\n  nice.forEach(n => { if (n && text.includes(noAccent(n))) score += 3; });\n  return score;\n};\n\nif (Array.isArray(data.search_results)) {\n  data.search_results.forEach(r => {\n    if (!r || !r.title || !r.link) return;\n    if (!isAmazonProduct(r.link)) return;\n    if (isJunkTitle(r.title)) return;\n    if (r.is_sponsored && (!r.price || !r.price.value)) return;\n\n    const price = parseAmazonPrice(r.price) || parseAmazonPrice(r.price_upper);\n    if (price <= 0) return;\n\n    const link = cleanAmazonUrl(r.link);\n    const snippet = (r.bullet_points && Array.isArray(r.bullet_points) ? r.bullet_points.join(' ') : '')\n                  + ' ' + (r.snippet || '');\n\n    products.push({\n      source: STORE,\n      title: String(r.title).trim(),\n      price,\n      link,\n      snippet,\n      score: scoreProduct(r.title, snippet),\n      image: r.image || ''\n    });\n  });\n}\n\n// Ordenar por relevancia DESC, luego precio ASC\nproducts.sort((a, b) => (b.score - a.score) || (a.price - b.price));\n\nreturn [{ json: { source: STORE, products, count: products.length } }];\n"
       }
     },
     {
@@ -193,7 +206,7 @@
         600
       ],
       "parameters": {
-        "jsCode": "// ============================================================\n// NORM dmi - Calidad de Producto & Specs\n// ============================================================\nconst STORE = 'DMI';\nconst DOMAIN = 'dmi.es';\n\nlet inputData = {};\ntry { inputData = $input.first().json || {}; } catch (e) { inputData = {}; }\n\nlet pCfg = {};\ntry { pCfg = $('Preparar Busqueda').first().json || {}; } catch (e) {}\nconst must = Array.isArray(pCfg.must) ? pCfg.must : [];\nconst nice = Array.isArray(pCfg.nice) ? pCfg.nice : [];\nconst pMin = Number(pCfg.pMin) || 15;\nconst pMax = Number(pCfg.pMax) || 99999;\nconst tipo = String(pCfg.tipo || '').toLowerCase();\n\nconst noAccent = (s) => {\n  if (!s) return '';\n  return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n};\n\nconst JUNK_WORDS = ['funda', 'maletin', 'mochila', 'seguro', 'garantia', 'montaje', 'instalacion', 'soporte', 'cable', 'adaptador', 'limpieza', 'reparacion', 'teclado para', 'bateria para', 'cargador'];\n\nconst extractPrices = (text) => {\n  if (!text) return [];\n  const out = [];\n  const re = /(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?)\\s*(?:€|euros|eur|(?=\\s|$))/gi;\n  let m;\n  const str = String(text);\n  while ((m = re.exec(str)) !== null) {\n    let n = m[1].replace(/\\./g, '').replace(',', '.');\n    const v = parseFloat(n);\n    if (!isNaN(v) && v > 5) out.push(v);\n  }\n  return out;\n};\n\nconst scoreProduct = (title, snippet) => {\n  const t = String(title || '');\n  const s = String(snippet || '');\n  const text = noAccent(t + ' ' + s);\n  let score = 0;\n  if (tipo && text.indexOf(tipo) !== -1) score += 50;\n  for (var i = 0; i < JUNK_WORDS.length; i++) {\n    if (noAccent(t).indexOf(JUNK_WORDS[i]) !== -1) { score -= 100; break; }\n  }\n  for (var i = 0; i < must.length; i++) {\n    if (must[i] && text.indexOf(noAccent(must[i])) !== -1) score += 10;\n  }\n  for (var i = 0; i < nice.length; i++) {\n    if (nice[i] && text.indexOf(noAccent(nice[i])) !== -1) score += 3;\n  }\n  return score;\n};\n\nconst products = [];\n\nconst organic = inputData.organic_results;\nif (organic && Array.isArray(organic)) {\n  for (var i = 0; i < organic.length; i++) {\n    const r = organic[i];\n    if (!r || !r.link || !r.title) continue;\n    const link = String(r.link).toLowerCase();\n    if (link.indexOf('/category/') !== -1 || link.indexOf('/c/') !== -1 || link.indexOf('/buscar') !== -1 || link.indexOf('/search') !== -1 || link.indexOf('query=') !== -1) continue;\n\n    let price = 0;\n    if (r.rich_snippet && r.rich_snippet.top && r.rich_snippet.top.detected_extensions && r.rich_snippet.top.detected_extensions.price) {\n      price = Number(r.rich_snippet.top.detected_extensions.price);\n    } else if (r.rich_snippet && r.rich_snippet.bottom && r.rich_snippet.bottom.detected_extensions && r.rich_snippet.bottom.detected_extensions.price) {\n      price = Number(r.rich_snippet.bottom.detected_extensions.price);\n    }\n    if (!price) {\n      const ps = extractPrices(String(r.title) + ' ' + String(r.snippet || ''));\n      if (ps.length > 0) price = ps[0];\n    }\n    if (price <= 0) continue;\n\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.snippet || '',\n      score: scoreProduct(r.title, r.snippet || '')\n    });\n  }\n}\n\nconst shopping = inputData.shopping_results;\nif (shopping && Array.isArray(shopping)) {\n  for (var i = 0; i < shopping.length; i++) {\n    const r = shopping[i];\n    if (!r || !r.link || !r.title) continue;\n    const merchant = String(r.source || '').toLowerCase();\n    if (merchant.indexOf('dmi') === -1 && String(r.link).toLowerCase().indexOf(DOMAIN) === -1) continue;\n    const price = Number(r.extracted_price) || 0;\n    if (price <= 0) continue;\n    products.push({\n      source: STORE, title: String(r.title).trim(), price: price, link: r.link, snippet: r.price || '',\n      score: scoreProduct(r.title, r.title)\n    });\n  }\n}\n\nconst seen = {};\nconst dedup = [];\nfor (var i = 0; i < products.length; i++) {\n  const p = products[i];\n  const key = String(p.link).split('?')[0].toLowerCase();\n  if (!seen[key]) {\n    seen[key] = true;\n    if (p.score < -20 || p.price > pMax + 100) continue; \n    dedup.push(p);\n  }\n}\n\ndedup.sort((a, b) => {\n  if (Math.abs(b.score - a.score) > 5) return b.score - a.score;\n  const aValid = a.price >= pMin;\n  const bValid = b.price >= pMin;\n  if (aValid !== bValid) return aValid ? -1 : 1;\n  return a.price - b.price;\n});\n\nreturn [{ json: { source: STORE, products: dedup, count: dedup.length } }];\n"
+        "jsCode": "// ============================================================\n// NORM DMI - Integración Robusta API Oficial\n// ============================================================\nconst STORE = 'DMI';\nconst items = $input.all();\n\n// Intentar extraer la lista de productos de varias formas posibles\nlet productsRaw = [];\nif (items.length === 1 && Array.isArray(items[0].json)) {\n  productsRaw = items[0].json;\n} else if (items.length === 1 && items[0].json.data && Array.isArray(items[0].json.data)) {\n  productsRaw = items[0].json.data;\n} else {\n  productsRaw = items.map(i => i.json);\n}\n\nconst products = [];\nproductsRaw.forEach(r => {\n  const title = r.DENOMINA || r.Name || r.title || '';\n  const price = parseFloat(r.COMPRA || r.price || 0);\n  const link  = r.URL || r.link || '';\n  const stock = parseInt(r.STOCK || r.stock || 0);\n  const brand = r.MARCA || r.brand || '';\n  const partNumber = r.PARTNUMBER || r.sku || '';\n  const snippet = r.SHORTDESC || r.description || '';\n\n  if (price > 0 && link && (stock > 0 || r.STOCK === undefined)) {\n    products.push({\n      source: STORE, title: title.trim(), price, link, \n      snippet: `[PN: ${partNumber}] ${snippet}`, \n      score: 15, brand\n    });\n  }\n});\n\nproducts.sort((a, b) => a.price - b.price);\nreturn [{ json: { source: STORE, products, count: products.length } }];\n"
       }
     },
     {
@@ -443,7 +456,7 @@
       ],
       "parameters": {
         "operation": "write",
-        "fileName": "=/n8n-watch/busqueda_ofertas_equipos/propuestas_generadas/informe_{{$now.toFormat('yyyyMMdd_HHmmss')}}.pdf",
+        "fileName": "C:\\Ander\\Workspace\\n8n\\busqueda_propuestas_equipos_informaticos\\propuestas_generadas\\informe_{{$now.toFormat('yyyyMMdd_HHmmss')}}.pdf",
         "dataPropertyName": "data"
       }
     },
@@ -458,6 +471,33 @@
       ],
       "parameters": {
         "jsCode": "\nlet pCfg = {};\ntry { pCfg = $('Parsear Peticion').first().json || {}; } catch(e) {}\nconst q    = (pCfg.q || 'PC sobremesa') + ' calidad precio oferta';\nconst pMax = pCfg.pMax || 1000;\nconst pMin = Math.round((pCfg.pMin || 400) * 0.8); // ampliar rango en retry\nreturn [{ json: { ...pCfg, q, pMin, retryCount: (pCfg.retryCount||0)+1 } }];\n"
+      }
+    },
+    {
+      "id": "v5n28",
+      "name": "DMI Auth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -540,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.dmi.es/api/v2/users/authenticate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "UserName",
+              "value": "CT046687"
+            },
+            {
+              "name": "Password",
+              "value": "5003Bnj8TjZmAHc6xxhYIJLTISAGqfodEbLPxatclZg="
+            }
+          ]
+        }
       }
     }
   ],
@@ -514,7 +554,7 @@
             "index": 0
           },
           {
-            "node": "DMI Search",
+            "node": "DMI Auth",
             "type": "main",
             "index": 0
           }
@@ -779,6 +819,17 @@
         [
           {
             "node": "Norm DMI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DMI Auth": {
+      "main": [
+        [
+          {
+            "node": "DMI Search",
             "type": "main",
             "index": 0
           }
